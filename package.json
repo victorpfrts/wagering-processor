@@ -12,7 +12,8 @@
     "migration:down": "bun src/infrastructure/db/migrate.ts down",
     "test": "bun test",
     "test:unit": "bun test test/unit",
-    "test:integration": "bun test test/integration"
+    "test:integration": "bun test test/integration",
+    "test:concurrency": "bun test test/concurrency"
   },
   "devDependencies": {
     "@types/bun": "latest",

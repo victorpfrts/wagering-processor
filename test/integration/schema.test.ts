@@ -8,7 +8,7 @@ import {
   seedWallet,
   type TestDatabase,
   uuid,
-} from './test-database.ts';
+} from '../support/test-database.ts';
 
 let db: TestDatabase;
 beforeAll(async () => {

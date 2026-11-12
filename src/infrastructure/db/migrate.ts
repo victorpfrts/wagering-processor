@@ -1,5 +1,5 @@
 import { MikroORM } from '@mikro-orm/postgresql';
-import { config } from '../../config.ts';
+import { loadConfig } from '../../config.ts';
 import { buildOrmConfig } from './orm-config.ts';
 
 /** Uso: bun src/infrastructure/db/migrate.ts up | down */
@@ -9,7 +9,7 @@ if (direction !== 'up' && direction !== 'down') {
   process.exit(1);
 }
 
-const orm = await MikroORM.init(buildOrmConfig(config.databaseUrl));
+const orm = await MikroORM.init(buildOrmConfig(loadConfig().databaseUrl));
 try {
   const applied = direction === 'up' ? await orm.migrator.up() : await orm.migrator.down();
   console.log(

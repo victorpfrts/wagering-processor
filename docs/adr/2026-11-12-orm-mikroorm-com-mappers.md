@@ -14,7 +14,8 @@ O enunciado exige que o domínio não dependa do ORM nem de decorators do NestJS
 Opção 3. O domínio fica em `src/domain` sem importar nada de ORM ou Nest. Os repositórios (adaptadores) usam o `EntityManager` dentro de `em.transactional()` e devolvem objetos de domínio.
 
 ## Consequências
-- Não usamos o dirty checking do Unit of Work sobre o domínio: as escritas são explícitas no repositório. Para saldo isso é desejável, porque a escrita crítica fica visível e auditável.
+- O Unit of Work e o Identity Map trabalham sobre os **registros**, não sobre o domínio: cada `UnitOfWork.run()` cria um `EntityManager` novo (`em.fork()`) e abre `em.transactional()`. A wallet travada com `LockMode.PESSIMISTIC_WRITE` fica no Identity Map e é a mesma instância que o repositório altera ao salvar.
+- Cada escrita do repositório faz `flush` imediato. Abrimos mão do agrupamento automático de comandos para ter a ordem do SQL igual à ordem do use case (a transação antes do lançamento que a referencia) e o erro de constraint no ponto que o causou.
 - Um mapper por agregado para manter. Custo aceito.
 - `Money` é mapeado em duas colunas (`NUMERIC(19,2)` + `CHAR(3)`) e trafega como string (ver ADR-004).
 

@@ -21,5 +21,10 @@ Opção 2.
 - Transações rejeitadas também são persistidas (auditáveis e idempotentes).
 - 50 envios paralelos da mesma aposta: 1 processa, 49 esperam o lock e respondem replay.
 
+## Corrida sem wallet para travar
+Quando a wallet não existe não há linha para travar, então duas requisições com a mesma chave rodam de fato em paralelo. Dois mecanismos cobrem o caso:
+- o índice único barra o segundo `INSERT`; o repositório traduz para `DuplicateKeyError` e o use case reexecuta (até 3 vezes), encontrando o registro;
+- as duas buscas de idempotência (por chave e por id externo) podem enxergar estados diferentes do banco, porque a outra transação pode confirmar entre elas. A decisão replay × conflito é tomada pela **chave gravada na linha encontrada**, não por qual busca a encontrou. Esse defeito apareceu no teste de 20 envios paralelos para wallet inexistente.
+
 ## Riscos
 - Mudar o conjunto de campos do hash quebra replays antigos. Mitigação: algoritmo documentado e versionável.

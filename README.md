@@ -17,5 +17,6 @@ bun run dev           # API em http://localhost:3000
 bun run typecheck
 bun run test:unit         # domínio puro, sem infraestrutura
 bun run test:integration  # PostgreSQL real (exige infra:up)
+bun run test:concurrency  # corridas reais contra o PostgreSQL
 bun run infra:down
 ```

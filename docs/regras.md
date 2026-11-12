@@ -100,6 +100,14 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 | Rejeição de negócio | 422 |
 | Falha transitória | 503 + `Retry-After` |
 
+## Lock e falha transitória
+- Espera máxima por lock de wallet: 3s (`DB_LOCK_TIMEOUT_MS`), aplicada com `SET LOCAL` em cada transação. Estourou → `TRANSIENT_FAILURE` (`LOCK_TIMEOUT`), HTTP 503 com `Retry-After: 1`; nada é gravado e a mesma requisição pode ser reenviada.
+- Deadlock, falha de serialização e banco indisponível também são falha transitória.
+- Violação de constraint que não seja de unicidade é erro interno (500): indica bug, não disputa.
+- Corpo de erro único em todos os endpoints: `{ code, message, details? }`.
+- Corpo com campo desconhecido é payload inválido (400).
+- Replay de transação `PENDING_REFERENCE` devolve 202 com `idempotentReplay: true` e sem saldo.
+
 ## SQS
 - Negócio → grava `REJECTED`, ack.
 - Transitório → visibilidade com backoff; 5 recebimentos → DLQ (redrive).
