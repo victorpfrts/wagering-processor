@@ -12,8 +12,10 @@ Serviço financeiro distribuído que processa transações de apostas (desafio t
 ```sh
 bun install
 bun run infra:up      # PostgreSQL (5433) e LocalStack/SQS (4566)
+bun run migration:up  # aplica o schema (migration:down reverte)
 bun run dev           # API em http://localhost:3000
 bun run typecheck
-bun test
+bun run test:unit         # domínio puro, sem infraestrutura
+bun run test:integration  # PostgreSQL real (exige infra:up)
 bun run infra:down
 ```

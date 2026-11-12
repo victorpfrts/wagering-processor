@@ -49,6 +49,29 @@ Documento vivo. Tudo que o enunciado deixa em aberto e foi decidido fica aqui; e
 - `OPENING` usa provider `internal` e `externalTransactionId = opening:{walletId}`.
 - Outbox: backoff de 1s dobrando até 60s, sem limite de tentativas (evento confirmado nunca é descartado).
 
+## Garantias aplicadas no schema
+Cada item abaixo tem um teste de integração que tenta violá-lo direto no PostgreSQL (`test/integration/schema.test.ts`).
+
+| Garantia | Mecanismo |
+|---|---|
+| Uma wallet por player + moeda | `UNIQUE (player_id, currency)` |
+| Saldo nunca negativo | `CHECK (balance >= 0)` |
+| Idempotência | `UNIQUE (idempotency_key)` e `UNIQUE (provider_id, external_transaction_id)` |
+| Uma reversão efetiva por referência | índice único parcial em `reference_transaction_id` (`PROCESSED`, `REFUND`/`ROLLBACK`) |
+| Estado terminal não muda; transação não é apagada | trigger `wager_tx_guard` |
+| Coerência status × `failure_code`, `processed_at`, `next_attempt_at`, saldo resultante | `CHECK`s |
+| Ledger append-only | trigger que recusa `UPDATE`, `DELETE` e `TRUNCATE` |
+| Aritmética do lançamento | `CHECK (after = before ± amount)` |
+| Um lançamento por transação por wallet | `UNIQUE (transaction_id, wallet_id)` |
+| Cadeia do ledger sem buraco | `UNIQUE (wallet_id, wallet_version)` + trigger que exige versão e saldo anteriores |
+| Saldo materializado == último lançamento | constraint trigger **adiado para o commit**, em `wallets` e no ledger |
+| Dedup de mensagens | PK `(consumer_name, message_id)` no inbox |
+
+- `wager_transactions.wallet_id` **não** é chave estrangeira: transação para wallet inexistente é gravada como `REJECTED` (`WALLET_NOT_FOUND`).
+- `walletId` precisa ser UUID (coluna `uuid`); outro formato é payload inválido (400).
+- Migrations são classes MikroORM com SQL explícito e `down` testado (up → down → up).
+- Cada arquivo de teste de integração cria um banco próprio, porque o ledger não permite limpeza.
+
 ## Limitações conhecidas
 - A rodada não é um agregado: não impedimos `WIN` depois de a `BET` da rodada ter sido revertida, nem duas `BET` na mesma rodada.
 
