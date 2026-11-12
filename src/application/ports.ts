@@ -1,4 +1,5 @@
 import type { IntegrationEvent } from '../domain/events/integration-event.ts';
+import type { OutboxMessage } from '../domain/outbox-message.ts';
 import type { WagerTransaction } from '../domain/wager-transaction.ts';
 import type { Wallet } from '../domain/wallet.ts';
 import type { WalletLedgerEntry } from '../domain/wallet-ledger-entry.ts';
@@ -39,6 +40,24 @@ export interface LedgerRepository {
 
 export interface OutboxRepository {
   enqueue(events: IntegrationEvent<unknown>[]): Promise<void>;
+  /**
+   * Trava (FOR UPDATE SKIP LOCKED) e devolve, em ordem de criação, mensagens
+   * pendentes que nenhum outro publisher está tratando. Só entram partições
+   * cujo evento mais antigo está vencido e foi travado por esta transação:
+   * um evento nunca é entregue antes de outro mais antigo da mesma partição.
+   */
+  lockDueBatch(now: Date, limit: number): Promise<OutboxMessage[]>;
+  /** Grava attempts, nextAttemptAt e publishedAt de mensagens travadas nesta transação. */
+  saveAll(messages: OutboxMessage[]): Promise<void>;
+}
+
+/** Destino dos eventos de integração (SQS). */
+export interface EventPublisher {
+  /**
+   * Publica as mensagens e devolve os ids das que falharam. Lançar equivale a
+   * falhar todas. Pode entregar a mesma mensagem mais de uma vez.
+   */
+  publish(messages: OutboxMessage[]): Promise<Set<string>>;
 }
 
 /** Repositórios ligados a UMA transação SQL. */
@@ -98,11 +117,14 @@ export interface AppLogger {
 /** Contadores de negócio. A implementação (Prometheus) fica na infraestrutura. */
 export interface WageringMetrics {
   reconciliationDivergence(): void;
+  outboxPublished(count: number): void;
+  outboxPublishFailed(count: number): void;
 }
 
 export const READ_MODEL = Symbol('WageringReadModel');
 export const APP_LOGGER = Symbol('AppLogger');
 export const METRICS = Symbol('WageringMetrics');
+export const EVENT_PUBLISHER = Symbol('EventPublisher');
 export const UNIT_OF_WORK = Symbol('UnitOfWork');
 export const CLOCK = Symbol('Clock');
 export const ID_GENERATOR = Symbol('IdGenerator');

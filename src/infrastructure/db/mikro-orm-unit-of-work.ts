@@ -135,6 +135,21 @@ function ledgerRepository(em: SqlEntityManager): LedgerRepository {
   };
 }
 
+const OUTBOX_COLUMNS = `o.seq, o.id, o.aggregate_id, o.partition_key, o.event_type, o.payload,
+                o.occurred_at, o.attempts, o.next_attempt_at`;
+
+interface OutboxRow {
+  seq: string;
+  id: string;
+  aggregate_id: string;
+  partition_key: string;
+  event_type: string;
+  payload: Record<string, unknown>;
+  occurred_at: Date;
+  attempts: number;
+  next_attempt_at: Date | null;
+}
+
 function outboxRepository(em: SqlEntityManager): OutboxRepository {
   return {
     async enqueue(events) {
@@ -143,6 +158,80 @@ function outboxRepository(em: SqlEntityManager): OutboxRepository {
         em.persist(em.create(OutboxSchema, outboxToRecord(OutboxMessage.enqueue(event))));
       }
       await em.flush();
+    },
+
+    async lockDueBatch(now, limit) {
+      // SQL explícito: SKIP LOCKED não tem equivalente direto no ORM.
+      //
+      // Passo 1 — trava as "cabeças": o evento pendente mais antigo de cada
+      // partição (wallet), se já estiver na hora de tentar.
+      //   - FOR UPDATE SKIP LOCKED: cabeça travada por outro publisher é
+      //     pulada sem espera, e a busca segue para as próximas wallets.
+      //   - cabeça ainda em backoff não é "vencida" → a wallet inteira espera
+      //     (um evento nunca ultrapassa outro mais antigo da mesma wallet).
+      const heads = await em.execute<OutboxRow[]>(
+        `select ${OUTBOX_COLUMNS}
+           from outbox_messages o
+          where o.published_at is null
+            and (o.next_attempt_at is null or o.next_attempt_at <= ?)
+            and not exists (
+                  select 1 from outbox_messages earlier
+                   where earlier.partition_key = o.partition_key
+                     and earlier.published_at is null
+                     and earlier.seq < o.seq)
+          order by o.seq
+          limit ?
+            for update of o skip locked`,
+        [now, limit],
+      );
+      if (heads.length === 0) return [];
+
+      // Passo 2 — os demais eventos pendentes dessas wallets. Só quem travou
+      // a cabeça chega aqui: para qualquer outro publisher eles não são
+      // cabeça (há um mais antigo pendente) e por isso não são selecionados.
+      const followers = await em.execute<OutboxRow[]>(
+        `select ${OUTBOX_COLUMNS}
+           from outbox_messages o
+          where o.published_at is null
+            and o.partition_key in (?)
+            and o.id not in (?)
+          order by o.seq
+          limit ?
+            for update of o skip locked`,
+        [heads.map((row) => row.partition_key), heads.map((row) => row.id), limit],
+      );
+
+      return [...heads, ...followers]
+        .sort((a, b) => (BigInt(a.seq) < BigInt(b.seq) ? -1 : 1))
+        .map((row) =>
+          OutboxMessage.rehydrate({
+            id: row.id,
+            aggregateId: row.aggregate_id,
+            partitionKey: row.partition_key,
+            eventType: row.event_type,
+            payload: row.payload,
+            occurredAt: row.occurred_at,
+            attempts: row.attempts,
+            nextAttemptAt: row.next_attempt_at ?? undefined,
+            publishedAt: undefined,
+          }),
+        );
+    },
+
+    async saveAll(messages) {
+      for (const message of messages) {
+        await em.execute(
+          `update outbox_messages
+              set attempts = ?, next_attempt_at = ?, published_at = ?
+            where id = ?`,
+          [
+            message.attempts,
+            message.nextAttemptAt ?? null,
+            message.publishedAt ?? null,
+            message.id,
+          ],
+        );
+      }
     },
   };
 }

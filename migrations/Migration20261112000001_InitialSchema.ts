@@ -287,6 +287,11 @@ export class Migration20261112000001_InitialSchema extends Migration {
     this.addSql(`
       create index outbox_pending on outbox_messages (seq) where published_at is null
     `);
+    // Ordem por wallet: achar rápido se há evento anterior da mesma partição ainda pendente.
+    this.addSql(`
+      create index outbox_pending_by_partition on outbox_messages (partition_key, seq)
+        where published_at is null
+    `);
   }
 
   override down(): void {

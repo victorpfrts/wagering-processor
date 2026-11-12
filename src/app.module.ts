@@ -9,6 +9,8 @@ import {
   type AppLogger,
   CLOCK,
   type Clock,
+  EVENT_PUBLISHER,
+  type EventPublisher,
   ID_GENERATOR,
   type IdGenerator,
   METRICS,
@@ -19,13 +21,16 @@ import {
   type WageringReadModel,
 } from './application/ports.ts';
 import { ProcessWagerTransaction } from './application/process-wager-transaction.ts';
+import { PublishOutbox } from './application/publish-outbox.ts';
 import { WageringQueries } from './application/queries.ts';
 import { APP_CONFIG, type AppConfig, loadConfig } from './config.ts';
 import { MikroOrmReadModel } from './infrastructure/db/mikro-orm-read-model.ts';
 import { MikroOrmUnitOfWork } from './infrastructure/db/mikro-orm-unit-of-work.ts';
 import { buildOrmConfig } from './infrastructure/db/orm-config.ts';
 import { JsonConsoleLogger, NoopMetrics } from './infrastructure/observability.ts';
+import { SqsEventPublisher } from './infrastructure/sqs/sqs-event-publisher.ts';
 import { SystemClock, UuidV7Generator } from './infrastructure/system.ts';
+import { WorkersService } from './infrastructure/workers/workers.service.ts';
 import {
   AnonymousProviderIdentity,
   PROVIDER_IDENTITY,
@@ -73,6 +78,31 @@ export class AppModule {
           useFactory: (orm: MikroORM) =>
             new MikroOrmUnitOfWork(orm, { lockTimeoutMs: config.db.lockTimeoutMs }),
         },
+        {
+          provide: EVENT_PUBLISHER,
+          inject: [SQSClient],
+          useFactory: (sqs: SQSClient) => new SqsEventPublisher(sqs, config.sqs.eventsQueue),
+        },
+        {
+          provide: PublishOutbox,
+          inject: [UNIT_OF_WORK, EVENT_PUBLISHER, CLOCK, APP_LOGGER, METRICS],
+          useFactory: (
+            unitOfWork: UnitOfWork,
+            publisher: EventPublisher,
+            clock: Clock,
+            logger: AppLogger,
+            metrics: WageringMetrics,
+          ) =>
+            new PublishOutbox(
+              unitOfWork,
+              publisher,
+              clock,
+              logger,
+              metrics,
+              config.outbox.batchSize,
+            ),
+        },
+        WorkersService,
         {
           provide: READ_MODEL,
           inject: [MikroORM],

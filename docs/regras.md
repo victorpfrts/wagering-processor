@@ -122,6 +122,14 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 - Responde 200 também quando há divergência, com `consistent: false` e `difference = stored − calculated` (pode ser negativa).
 - Divergência gera log de erro e incrementa métrica. Nada é corrigido.
 
+## Publicação de eventos (outbox)
+- Worker em toda instância (`OUTBOX_ENABLED`), consultando a cada 500 ms quando ocioso e sem pausa enquanto há trabalho; lote de até 100 cabeças de wallet.
+- Entrega at-least-once: `published_at` só é gravado depois da confirmação do SQS. O consumidor deduplica por `eventId`.
+- Ordem garantida **por wallet**; entre wallets diferentes não há ordem.
+- Falha de envio: `attempts + 1` e nova tentativa em 1s, 2s, 4s... até 60s, sem limite. Enquanto isso os eventos seguintes da mesma wallet esperam.
+- A transação do banco fica aberta durante o envio ao SQS (é o que mantém os eventos travados). Aceito porque o lote é pequeno e a transação não toca em wallets.
+- No `SIGTERM` o worker termina a rodada em andamento antes de parar.
+
 ## SQS
 - Negócio → grava `REJECTED`, ack.
 - Transitório → visibilidade com backoff; 5 recebimentos → DLQ (redrive).

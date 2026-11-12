@@ -301,7 +301,11 @@ describe('POST /wallets/:walletId/reconciliation', () => {
         warn: () => {},
         error: (message, fields) => logs.push({ message, fields }),
       },
-      { reconciliationDivergence: () => (divergences += 1) },
+      {
+        reconciliationDivergence: () => (divergences += 1),
+        outboxPublished: () => {},
+        outboxPublishFailed: () => {},
+      },
     );
     const result = await queries.reconcile(wallet['id']);
     await orm.close(true);

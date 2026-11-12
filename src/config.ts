@@ -6,6 +6,11 @@ export interface AppConfig {
     /** Espera máxima por um lock de linha antes de devolver falha transitória. */
     lockTimeoutMs: number;
   };
+  outbox: {
+    enabled: boolean;
+    pollIntervalMs: number;
+    batchSize: number;
+  };
   sqs: {
     endpoint: string;
     region: string;
@@ -32,6 +37,12 @@ function integer(env: Env, name: string, fallback: number): number {
   return value;
 }
 
+function flag(env: Env, name: string, fallback: boolean): boolean {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  return raw === 'true' || raw === '1';
+}
+
 export function loadConfig(env: Env = process.env): AppConfig {
   return {
     port: integer(env, 'PORT', 3000),
@@ -39,6 +50,11 @@ export function loadConfig(env: Env = process.env): AppConfig {
     db: {
       poolMax: integer(env, 'DB_POOL_MAX', 10),
       lockTimeoutMs: integer(env, 'DB_LOCK_TIMEOUT_MS', 3000),
+    },
+    outbox: {
+      enabled: flag(env, 'OUTBOX_ENABLED', true),
+      pollIntervalMs: integer(env, 'OUTBOX_POLL_INTERVAL_MS', 500),
+      batchSize: integer(env, 'OUTBOX_BATCH_SIZE', 100),
     },
     sqs: {
       endpoint: text(env, 'SQS_ENDPOINT', 'http://localhost:4566'),

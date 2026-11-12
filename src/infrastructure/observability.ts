@@ -21,4 +21,6 @@ export class JsonConsoleLogger implements AppLogger {
 
 export class NoopMetrics implements WageringMetrics {
   reconciliationDivergence(): void {}
+  outboxPublished(): void {}
+  outboxPublishFailed(): void {}
 }
