@@ -24,10 +24,28 @@ export const submitTransactionSchema = z.strictObject({
 
 export type SubmitTransactionBody = z.infer<typeof submitTransactionSchema>;
 
+export const openWalletSchema = z.strictObject({
+  playerId: identifier,
+  initialBalance: moneySchema,
+});
+
+export const uuidParamSchema = z.uuid();
+export const identifierParamSchema = identifier;
+
+export const ledgerQuerySchema = z.strictObject({
+  cursor: z.string().min(1).max(200).optional(),
+  // query string chega como texto: só dígitos, convertido depois
+  limit: z
+    .string()
+    .regex(/^\d{1,4}$/)
+    .transform((value) => Number.parseInt(value, 10))
+    .optional(),
+});
+
 export const idempotencyKeySchema = z.string().min(1).max(255);
 
 /** Valida e devolve o valor tipado; falha vira ValidationError com os campos. */
-export function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
+export function parseOrThrow<T>(schema: z.ZodType<T, unknown>, value: unknown, what: string): T {
   const result = schema.safeParse(value);
   if (!result.success) {
     const details = result.error.issues.map((issue) => ({

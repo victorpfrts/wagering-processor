@@ -119,7 +119,6 @@ export class Migration20261112000001_InitialSchema extends Migration {
     // -------------------------------------------------- wallet_ledger_entries
     this.addSql(`
       create table wallet_ledger_entries (
-        seq             bigint generated always as identity,
         id              uuid primary key,
         wallet_id       uuid not null references wallets (id),
         transaction_id  uuid not null references wager_transactions (id),
@@ -131,10 +130,9 @@ export class Migration20261112000001_InitialSchema extends Migration {
         wallet_version  integer not null,
         created_at      timestamptz not null,
 
-        constraint ledger_seq_unique unique (seq),
         -- no máximo um lançamento por transação por wallet
         constraint ledger_one_entry_per_transaction unique (transaction_id, wallet_id),
-        -- a cadeia do ledger não tem versão repetida
+        -- a cadeia do ledger não tem versão repetida; também serve à paginação por cursor
         constraint ledger_wallet_version_unique unique (wallet_id, wallet_version),
         constraint ledger_direction_valid check (direction in ('DEBIT', 'CREDIT')),
         constraint ledger_amount_positive check (amount > 0),
@@ -146,7 +144,6 @@ export class Migration20261112000001_InitialSchema extends Migration {
         )
       )
     `);
-    this.addSql(`create index ledger_wallet_seq on wallet_ledger_entries (wallet_id, seq)`);
 
     // Imutabilidade estrutural: nada de UPDATE, DELETE ou TRUNCATE.
     this.addSql(`

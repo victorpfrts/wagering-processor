@@ -58,6 +58,51 @@ export interface UnitOfWork {
   run<T>(work: (context: TransactionContext) => Promise<T>): Promise<T>;
 }
 
+export interface LedgerPage {
+  entries: WalletLedgerEntry[];
+  /** walletVersion do último item quando há mais páginas. */
+  nextVersion: number | undefined;
+}
+
+export interface ReconciliationSnapshot {
+  currency: string;
+  /** Saldo materializado, decimal string. */
+  storedBalance: string;
+  /** Soma dos lançamentos (créditos − débitos), decimal string; pode ser negativa se houver corrupção. */
+  ledgerBalance: string;
+  checkedEntries: number;
+}
+
+/** Leituras fora de transação de escrita. Nunca alteram estado. */
+export interface WageringReadModel {
+  findWallet(id: string): Promise<Wallet | undefined>;
+  /** Do lançamento mais recente para o mais antigo, a partir de `beforeVersion` (exclusivo). */
+  ledgerPage(walletId: string, beforeVersion: number | undefined, limit: number): Promise<LedgerPage>;
+  findTransaction(id: string): Promise<WagerTransaction | undefined>;
+  findTransactionByExternalId(
+    providerId: string,
+    externalTransactionId: string,
+  ): Promise<WagerTransaction | undefined>;
+  /** Saldo e soma do ledger lidos no MESMO snapshot do banco. */
+  reconciliationSnapshot(walletId: string): Promise<ReconciliationSnapshot | undefined>;
+}
+
+export type LogFields = Record<string, unknown>;
+
+export interface AppLogger {
+  info(message: string, fields?: LogFields): void;
+  warn(message: string, fields?: LogFields): void;
+  error(message: string, fields?: LogFields): void;
+}
+
+/** Contadores de negócio. A implementação (Prometheus) fica na infraestrutura. */
+export interface WageringMetrics {
+  reconciliationDivergence(): void;
+}
+
+export const READ_MODEL = Symbol('WageringReadModel');
+export const APP_LOGGER = Symbol('AppLogger');
+export const METRICS = Symbol('WageringMetrics');
 export const UNIT_OF_WORK = Symbol('UnitOfWork');
 export const CLOCK = Symbol('Clock');
 export const ID_GENERATOR = Symbol('IdGenerator');

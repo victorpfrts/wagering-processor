@@ -10,6 +10,7 @@ import {
   IdempotencyConflictError,
   NotFoundError,
   TransientInfrastructureError,
+  WalletAlreadyExistsError,
 } from '../../application/errors.ts';
 import { InvalidMoneyError, ValidationError } from '../../domain/errors.ts';
 import { RequestValidationError } from './schemas.ts';
@@ -26,6 +27,7 @@ interface ErrorBody {
  *   400 payload inválido            → corrigir e reenviar
  *   404 recurso inexistente
  *   409 conflito de idempotência    → não reenviar com esta chave
+ *   409 wallet duplicada
  *   503 falha transitória           → reenviar a MESMA requisição (Retry-After)
  *   500 erro interno                → bug; nada foi confirmado
  *
@@ -53,6 +55,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
     }
     if (exception instanceof ValidationError || exception instanceof InvalidMoneyError) {
       return reply(HttpStatus.BAD_REQUEST, 'VALIDATION_ERROR', exception.message);
+    }
+    if (exception instanceof WalletAlreadyExistsError) {
+      return reply(HttpStatus.CONFLICT, exception.code, exception.message);
     }
     if (exception instanceof IdempotencyConflictError) {
       return reply(HttpStatus.CONFLICT, exception.code, exception.message);

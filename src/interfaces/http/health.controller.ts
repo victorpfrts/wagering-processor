@@ -2,9 +2,11 @@ import { GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { MikroORM } from '@mikro-orm/postgresql';
 import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
 import { APP_CONFIG, type AppConfig } from '../../config.ts';
+import { Public } from './auth.ts';
 
 type CheckStatus = 'up' | 'down';
 
+@Public()
 @Controller('health')
 export class HealthController {
   constructor(

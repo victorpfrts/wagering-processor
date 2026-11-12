@@ -48,3 +48,11 @@ export class DuplicateKeyError extends ApplicationError {
     super(`Duplicate key (${constraint ?? 'unknown constraint'})`, options);
   }
 }
+
+export class WalletAlreadyExistsError extends ApplicationError {
+  readonly code = 'WALLET_ALREADY_EXISTS';
+
+  constructor() {
+    super('A wallet already exists for this player and currency');
+  }
+}

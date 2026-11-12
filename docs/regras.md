@@ -108,6 +108,20 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 - Corpo com campo desconhecido é payload inválido (400).
 - Replay de transação `PENDING_REFERENCE` devolve 202 com `idempotentReplay: true` e sem saldo.
 
+## Wallets e consultas
+- `POST /wallets` responde 201 com `Location`. Saldo inicial zero cria só a wallet (versão 1), sem transação, lançamento ou evento.
+- A abertura com saldo publica `WagerTransactionProcessed` (da `OPENING`) e `WalletBalanceChanged`.
+- `POST /wallets` não é idempotente: repetir devolve 409 `WALLET_ALREADY_EXISTS`. Quem decide a corrida é o índice único.
+- Id malformado na rota (não UUID) é 400; id bem formado e inexistente é 404.
+- Consulta por id externo é escopada pelo provedor: o id de outro provedor devolve 404.
+- Ledger: do lançamento mais recente para o mais antigo; `limit` de 1 a 200 (padrão 50).
+- Cursor: base64url de `{"v": walletVersion}`; busca "versão menor que X". Como o ledger é append-only e a versão é única por wallet, lançamentos novos não repetem nem pulam itens nas páginas seguintes.
+
+## Reconciliação
+- Saldo e soma do ledger são lidos num único comando SQL (mesmo snapshot), somados em `NUMERIC` pelo banco.
+- Responde 200 também quando há divergência, com `consistent: false` e `difference = stored − calculated` (pode ser negativa).
+- Divergência gera log de erro e incrementa métrica. Nada é corrigido.
+
 ## SQS
 - Negócio → grava `REJECTED`, ack.
 - Transitório → visibilidade com backoff; 5 recebimentos → DLQ (redrive).
