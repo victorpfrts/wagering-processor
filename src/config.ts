@@ -11,6 +11,13 @@ export interface AppConfig {
     pollIntervalMs: number;
     batchSize: number;
   };
+  consumer: {
+    enabled: boolean;
+    waitTimeSeconds: number;
+    maxMessages: number;
+    retryBaseSeconds: number;
+    retryMaxSeconds: number;
+  };
   sqs: {
     endpoint: string;
     region: string;
@@ -55,6 +62,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
       enabled: flag(env, 'OUTBOX_ENABLED', true),
       pollIntervalMs: integer(env, 'OUTBOX_POLL_INTERVAL_MS', 500),
       batchSize: integer(env, 'OUTBOX_BATCH_SIZE', 100),
+    },
+    consumer: {
+      enabled: flag(env, 'CONSUMER_ENABLED', true),
+      waitTimeSeconds: integer(env, 'CONSUMER_WAIT_TIME_SECONDS', 5),
+      maxMessages: integer(env, 'CONSUMER_MAX_MESSAGES', 10),
+      retryBaseSeconds: integer(env, 'CONSUMER_RETRY_BASE_SECONDS', 2),
+      retryMaxSeconds: integer(env, 'CONSUMER_RETRY_MAX_SECONDS', 60),
     },
     sqs: {
       endpoint: text(env, 'SQS_ENDPOINT', 'http://localhost:4566'),

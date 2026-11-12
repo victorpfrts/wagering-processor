@@ -142,4 +142,30 @@ export const OutboxSchema = new EntitySchema<OutboxRecord>({
   },
 });
 
-export const entitySchemas = [WalletSchema, WagerTransactionSchema, LedgerEntrySchema, OutboxSchema];
+export interface InboxRecord {
+  consumerName: string;
+  messageId: string;
+  payloadHash: string;
+  receivedAt: Date;
+  processedAt: Date | null;
+}
+
+export const InboxSchema = new EntitySchema<InboxRecord>({
+  name: 'InboxRecord',
+  tableName: 'inbox_messages',
+  properties: {
+    consumerName: { type: 'string', primary: true },
+    messageId: { type: 'string', primary: true },
+    payloadHash: { type: 'string' },
+    receivedAt: { type: 'Date' },
+    processedAt: { type: 'Date', nullable: true },
+  },
+});
+
+export const entitySchemas = [
+  WalletSchema,
+  WagerTransactionSchema,
+  LedgerEntrySchema,
+  OutboxSchema,
+  InboxSchema,
+];

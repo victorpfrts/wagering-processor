@@ -1,6 +1,7 @@
 import { LockMode } from '@mikro-orm/core';
 import type { MikroORM, SqlEntityManager } from '@mikro-orm/postgresql';
 import type {
+  InboxRepository,
   LedgerRepository,
   OutboxRepository,
   TransactionContext,
@@ -8,6 +9,7 @@ import type {
   WagerTransactionRepository,
   WalletRepository,
 } from '../../application/ports.ts';
+import { InboxMessage } from '../../domain/inbox-message.ts';
 import { OutboxMessage } from '../../domain/outbox-message.ts';
 import { translateDatabaseError } from './errors.ts';
 import {
@@ -20,6 +22,7 @@ import {
   walletToRecord,
 } from './mappers.ts';
 import {
+  InboxSchema,
   LedgerEntrySchema,
   OutboxSchema,
   WagerTransactionSchema,
@@ -68,6 +71,7 @@ function buildContext(em: SqlEntityManager): TransactionContext {
     transactions: transactionRepository(em),
     ledger: ledgerRepository(em),
     outbox: outboxRepository(em),
+    inbox: inboxRepository(em),
   };
 }
 
@@ -130,6 +134,35 @@ function ledgerRepository(em: SqlEntityManager): LedgerRepository {
   return {
     async append(entry) {
       em.persist(em.create(LedgerEntrySchema, ledgerEntryToRecord(entry)));
+      await em.flush();
+    },
+  };
+}
+
+function inboxRepository(em: SqlEntityManager): InboxRepository {
+  return {
+    async find(consumerName, messageId) {
+      const record = await em.findOne(InboxSchema, { consumerName, messageId });
+      return record === null
+        ? undefined
+        : InboxMessage.rehydrate({
+            messageId: record.messageId,
+            consumerName: record.consumerName,
+            payloadHash: record.payloadHash,
+            receivedAt: record.receivedAt,
+            processedAt: record.processedAt ?? undefined,
+          });
+    },
+    async insert(message) {
+      em.persist(
+        em.create(InboxSchema, {
+          consumerName: message.consumerName,
+          messageId: message.messageId,
+          payloadHash: message.payloadHash,
+          receivedAt: message.receivedAt,
+          processedAt: message.processedAt ?? null,
+        }),
+      );
       await em.flush();
     },
   };

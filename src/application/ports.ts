@@ -1,4 +1,5 @@
 import type { IntegrationEvent } from '../domain/events/integration-event.ts';
+import type { InboxMessage } from '../domain/inbox-message.ts';
 import type { OutboxMessage } from '../domain/outbox-message.ts';
 import type { WagerTransaction } from '../domain/wager-transaction.ts';
 import type { Wallet } from '../domain/wallet.ts';
@@ -60,12 +61,18 @@ export interface EventPublisher {
   publish(messages: OutboxMessage[]): Promise<Set<string>>;
 }
 
+export interface InboxRepository {
+  find(consumerName: string, messageId: string): Promise<InboxMessage | undefined>;
+  insert(message: InboxMessage): Promise<void>;
+}
+
 /** Repositórios ligados a UMA transação SQL. */
 export interface TransactionContext {
   wallets: WalletRepository;
   transactions: WagerTransactionRepository;
   ledger: LedgerRepository;
   outbox: OutboxRepository;
+  inbox: InboxRepository;
 }
 
 /**
@@ -119,7 +126,11 @@ export interface WageringMetrics {
   reconciliationDivergence(): void;
   outboxPublished(count: number): void;
   outboxPublishFailed(count: number): void;
+  /** Desfecho de uma mensagem consumida da fila. */
+  messageHandled(outcome: MessageOutcome): void;
 }
+
+export type MessageOutcome = 'acked' | 'retried' | 'dead_lettered';
 
 export const READ_MODEL = Symbol('WageringReadModel');
 export const APP_LOGGER = Symbol('AppLogger');

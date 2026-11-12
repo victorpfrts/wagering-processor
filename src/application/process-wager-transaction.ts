@@ -17,7 +17,12 @@ import {
 } from '../domain/wager-transaction.ts';
 import type { Wallet } from '../domain/wallet.ts';
 import type { WalletLedgerEntry } from '../domain/wallet-ledger-entry.ts';
-import { DuplicateKeyError, IdempotencyConflictError } from './errors.ts';
+import { InboxMessage } from '../domain/inbox-message.ts';
+import {
+  DuplicateKeyError,
+  IdempotencyConflictError,
+  InboxPayloadMismatchError,
+} from './errors.ts';
 import type { Clock, IdGenerator, TransactionContext, UnitOfWork } from './ports.ts';
 
 export interface ProcessWagerTransactionCommand {
@@ -35,6 +40,17 @@ export interface ProcessWagerTransactionCommand {
   correlationId: string;
   /** Id da mensagem que causou a operação (entrada por fila). */
   causationId?: string | undefined;
+  /**
+   * Presente quando a entrada é a fila: a mensagem é registrada no inbox na
+   * mesma transação SQL do efeito financeiro.
+   */
+  inbox?: InboxReceipt | undefined;
+}
+
+export interface InboxReceipt {
+  consumerName: string;
+  messageId: string;
+  payloadHash: string;
 }
 
 export interface WagerTransactionResult {
@@ -132,6 +148,13 @@ export class ProcessWagerTransaction {
     // 1. Lock primeiro: a partir daqui ninguém mais mexe nesta wallet.
     const wallet = await context.wallets.lockById(command.walletId);
 
+    // Entrada por fila: registra a mensagem no inbox, na mesma transação.
+    // Redelivery (mesmo messageId, mesmo conteúdo) segue adiante e cai no
+    // replay da idempotency key logo abaixo — nenhum efeito é repetido.
+    if (command.inbox !== undefined) {
+      await this.registerInInbox(context, command.inbox);
+    }
+
     // 2. Idempotência, já sob o lock.
     const sameKey = await context.transactions.findByIdempotencyKey(command.idempotencyKey);
     const sameExternalId =
@@ -161,6 +184,20 @@ export class ProcessWagerTransaction {
     const transaction = candidate.create();
     await this.resolve(context, wallet, transaction, command, 'insert');
     return toResult(transaction, false);
+  }
+
+  private async registerInInbox(context: TransactionContext, receipt: InboxReceipt): Promise<void> {
+    const seen = await context.inbox.find(receipt.consumerName, receipt.messageId);
+    if (seen === undefined) {
+      const now = this.clock.now();
+      const message = InboxMessage.receive({ ...receipt, now });
+      message.markProcessed(now);
+      // Se esta transação for desfeita, o registro some junto: a mensagem
+      // volta a ser "nunca vista" e o redelivery a processa do zero.
+      await context.inbox.insert(message);
+    } else if (!seen.matchesPayload(receipt.payloadHash)) {
+      throw new InboxPayloadMismatchError();
+    }
   }
 
   /**

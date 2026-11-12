@@ -56,3 +56,12 @@ export class WalletAlreadyExistsError extends ApplicationError {
     super('A wallet already exists for this player and currency');
   }
 }
+
+/** O mesmo messageId chegou de novo com conteúdo diferente: mensagem inválida, não redelivery. */
+export class InboxPayloadMismatchError extends ApplicationError {
+  readonly code = 'MESSAGE_ID_REUSED';
+
+  constructor() {
+    super('messageId was already received with a different payload');
+  }
+}

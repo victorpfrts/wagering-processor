@@ -305,6 +305,7 @@ describe('POST /wallets/:walletId/reconciliation', () => {
         reconciliationDivergence: () => (divergences += 1),
         outboxPublished: () => {},
         outboxPublishFailed: () => {},
+        messageHandled: () => {},
       },
     );
     const result = await queries.reconcile(wallet['id']);

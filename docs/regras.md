@@ -130,12 +130,30 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 - A transação do banco fica aberta durante o envio ao SQS (é o que mantém os eventos travados). Aceito porque o lote é pequeno e a transação não toca em wallets.
 - No `SIGTERM` o worker termina a rodada em andamento antes de parar.
 
-## SQS
-- Negócio → grava `REJECTED`, ack.
-- Transitório → visibilidade com backoff; 5 recebimentos → DLQ (redrive).
-- Permanente (schema inválido, mesmo `messageId` com hash diferente) → DLQ direto.
-- `SIGTERM` → para de buscar, conclui o que está em andamento, devolve a visibilidade do resto.
-- Eventos em `wager-events.fifo`, grupo = `walletId`, deduplicação = `eventId`.
+## SQS (consumo de `wager-transactions.fifo`)
+- A fila chama o **mesmo use case** do HTTP; a única diferença é o registro no inbox, feito na mesma transação SQL.
+- `correlationId` e `causationId` dos eventos gerados = `messageId` da mensagem.
+- Inbox: chave `(consumerName, messageId)`, com hash do conteúdo de negócio (`type` + `data`; `occurredAt` é transporte).
+- Ack (`DeleteMessage`) só depois do commit.
+
+| Situação | Classe | Ação |
+|---|---|---|
+| Processada, rejeitada por regra, ou pendente de referência | desfecho confirmado | ack |
+| Redelivery (mesmo `messageId`, mesmo conteúdo) | duplicata | ack, sem efeito novo |
+| Mesma operação em outra mensagem (mesma idempotency key) | replay | ack, sem efeito novo |
+| JSON malformado, schema inválido, valor inválido | permanente | DLQ direto, com atributo `failureReason` |
+| Mesmo `messageId` com conteúdo diferente | permanente (`MESSAGE_ID_REUSED`) | DLQ direto |
+| Mesma idempotency key com payload diferente | permanente (`IDEMPOTENCY_CONFLICT`) | DLQ direto, para auditoria |
+| Lock disputado, banco fora, erro inesperado | transitório | volta à fila com backoff |
+
+- Na fila não existe resposta ao provedor, então conflito de idempotência vai para a DLQ em vez de ser descartado com ack (no HTTP é 409).
+- Erro desconhecido é tratado como transitório: na dúvida não se perde a mensagem; se persistir, o limite leva à DLQ.
+- Backoff do retry: visibilidade de 2s, 4s, 8s... até 60s, pelo número de recebimentos.
+- Limite: `maxReceiveCount = 5` na fila; no 6º recebimento o próprio SQS move para a DLQ (redrive).
+- Ordem: grupos (wallets) diferentes em paralelo; dentro do grupo, na ordem do lote. Uma mensagem em retry **não** segura as seguintes — ordem é otimização, e o sistema já tolera chegada fora de ordem (`PENDING_REFERENCE`).
+- `SIGTERM`: interrompe o long polling, termina as mensagens em andamento e devolve as recebidas e não iniciadas com visibilidade 0.
+- Falha ao avisar o broker (ack, visibilidade) é só logada: a mensagem reaparece e o inbox absorve.
+- Eventos de saída em `wager-events.fifo`, grupo = `walletId`, deduplicação = `eventId`.
 
 ## Autenticação
 Não implementada (não pontua). Ponto de extensão: `AuthGuard` no-op + `ProviderIdentityPort`. Desenho com Keycloak (client credentials por provedor) no `ARCHITECTURE.md`.
