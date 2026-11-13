@@ -261,14 +261,14 @@ Nenhum controller mudaria. Mensagens da fila continuam tratadas como canal inter
 - **Logs:** pino, uma linha JSON por evento. Todo processamento gera uma linha com `correlationId`, `transactionId`, `walletId`, `providerId` e `messageId` (quando vem da fila). O log sai do caso de uso, então é igual para HTTP e fila.
 - **Sem dados financeiros:** o código não envia valor, saldo nem corpo de requisição. Como segunda barreira, o logger mascara as chaves `money`, `amount`, `balance`, `payload`, `body` e `authorization`.
 - **Métricas** em `/metrics` (Prometheus): transações por status, duplicatas, retries, DLQ, conflitos de concorrência, atraso da outbox e latência. Só contam depois do commit ou do erro definitivo. A lista está em [`docs/regras.md`](docs/regras.md#observabilidade).
-- **Health:** `/health/live` não toca em dependências; `/health/ready` verifica PostgreSQL e SQS.
+- **Health:** `/health/live` não toca em dependências; `/health/ready` verifica PostgreSQL e SQS, com prazo de 2 s por verificação (dependência que não responde conta como fora do ar).
 - **Reconciliação:** compara saldo e soma do ledger lidos num único comando SQL. Divergência é logada, contada e sinalizada na resposta; nunca corrigida.
 
 ## 9. Estratégia de testes
 
 | Nível | O que prova | Como |
 |---|---|---|
-| Unidade (122) | regras de negócio | domínio puro, sem I/O |
+| Unidade (126) | regras de negócio | domínio puro, sem I/O |
 | Integração (140) | schema, atomicidade, HTTP, outbox, fila | PostgreSQL e LocalStack reais |
 | Concorrência (18) | corridas e quedas | conexões paralelas e **processos reais** |
 
@@ -299,7 +299,8 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 
 - A **rodada não é um agregado**. Não impedimos um `WIN` depois de a `BET` da rodada ter sido revertida, nem duas `BET` na mesma rodada.
 - **`FAILED` depende de o banco responder.** Se o banco está fora do ar durante todas as entregas, a mensagem vai para a DLQ pelo redrive do SQS sem deixar transação; a auditoria desse caso fica só na fila. `FAILED` também só nasce da fila: no HTTP, falha transitória devolve 503 e quem decide desistir é o provedor.
-- **`FAILED` é terminal.** A idempotency key fica ocupada; para tentar de novo o provedor precisa de uma nova operação (novo `externalTransactionId`).
+- **`FAILED` é terminal, mesmo nascendo de falha transitória.** Uma indisponibilidade que dure as 5 entregas (cerca de 30 s de backoff) mata a operação em definitivo. A idempotency key fica ocupada: reenviar a mensagem da DLQ para a fila principal **não a reprocessa**, só devolve o `FAILED` gravado. A DLQ serve para auditoria e diagnóstico; a recuperação é o provedor emitir uma nova operação (novo `externalTransactionId`). É a leitura literal do enunciado (`FAILED` terminal), e o custo dela é este.
+- **A idempotency key é única globalmente, não por provedor.** Dois provedores que usem a mesma chave colidem: o segundo recebe conflito (409). O formato recomendado (`{providerId}:{externalTransactionId}`) evita a colisão acidental, mas nada impede a deliberada enquanto não houver autenticação. Não há vazamento de dados: o replay exige o mesmo payload, que inclui o `providerId`.
 - O `correlationId` da requisição original **não é guardado na transação**. Os eventos de uma resolução tardia usam o id da transação como correlação.
 - Reversão parcial está fora de escopo, como o enunciado define. Não há conversão entre moedas.
 
@@ -330,9 +331,10 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 ## 13. Com mais tempo
 
 1. Modelar a rodada como agregado, com estado próprio.
-2. Reprocessamento assistido da DLQ (redrive manual com auditoria).
-3. Persistir o `correlationId` na transação.
-4. Retenção e particionamento para inbox, outbox e ledger.
-5. Medir o publisher da outbox isolado e com a fila real; depois avaliar `LISTEN/NOTIFY` como gatilho, mantendo o polling como rede de segurança.
-6. Keycloak, conforme o desenho da seção 7.
-7. Rastreamento distribuído com OpenTelemetry.
+2. Rever o `FAILED` por esgotamento: hoje ele impede o reprocessamento pela DLQ. Uma alternativa é um estado reabrível por um operador, com auditoria.
+3. Escopar a idempotency key por provedor (`UNIQUE (provider_id, idempotency_key)`).
+4. Persistir o `correlationId` na transação.
+5. Retenção e particionamento para inbox, outbox e ledger.
+6. Medir o publisher da outbox isolado e com a fila real; depois avaliar `LISTEN/NOTIFY` como gatilho, mantendo o polling como rede de segurança.
+7. Keycloak, conforme o desenho da seção 7.
+8. Rastreamento distribuído com OpenTelemetry.

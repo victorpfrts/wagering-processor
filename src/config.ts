@@ -3,6 +3,8 @@ export interface AppConfig {
   logLevel: string;
   /** Prazo para o desligamento limpo antes de forçar a saída. */
   shutdownTimeoutMs: number;
+  /** Prazo de cada verificação do /health/ready. */
+  readinessTimeoutMs: number;
   databaseUrl: string;
   db: {
     poolMax: number;
@@ -65,6 +67,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     port: integer(env, 'PORT', 3000),
     logLevel: text(env, 'LOG_LEVEL', 'info'),
     shutdownTimeoutMs: integer(env, 'SHUTDOWN_TIMEOUT_MS', 25_000),
+    readinessTimeoutMs: integer(env, 'READINESS_TIMEOUT_MS', 2_000),
     databaseUrl: text(env, 'DATABASE_URL', 'postgres://wagering:wagering@localhost:5433/wagering'),
     db: {
       poolMax: integer(env, 'DB_POOL_MAX', 10),

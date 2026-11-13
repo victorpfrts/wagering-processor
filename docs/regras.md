@@ -13,6 +13,7 @@ Documento vivo. Tudo que o enunciado deixa em aberto e foi decidido fica aqui; e
 - Mesma chave + mesmo hash → replay com o resultado original (inclui o saldo daquele momento).
 - Mesma chave + hash diferente → conflito.
 - Chave diferente para o mesmo `(providerId, externalTransactionId)` → conflito.
+- A chave é única globalmente, não por provedor: a mesma chave usada por dois provedores colide (conflito). Limitação conhecida.
 
 ## Reversões
 - Uma transação tem no máximo **uma reversão efetiva** (`REFUND` ou `ROLLBACK`). Mais restrito que a regra 4 do enunciado, para impedir crédito duplo de uma mesma BET.
@@ -162,6 +163,7 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 - O registro de `FAILED` não trava a wallet (não há efeito financeiro). Se a operação já tiver desfecho gravado, ele é preservado.
 - Rede de segurança: se nem o registro for possível (banco fora), a mensagem volta à fila e o `maxReceiveCount = 5` da fila (redrive do SQS) a move para a DLQ, sem linha de transação.
 - `FAILED` é terminal: o replay devolve `FAILED` (HTTP 500) e a operação só pode ser refeita com outro `externalTransactionId`.
+- Consequência: reenviar a mensagem da DLQ para a fila principal não a reprocessa; devolve o `FAILED` gravado. A DLQ é para auditoria e diagnóstico.
 - `FAILED` só nasce da fila. No HTTP, falha transitória é 503 e a decisão de desistir é do provedor.
 - Ordem: grupos (wallets) diferentes em paralelo; dentro do grupo, na ordem do lote.
 - Retry de uma mensagem: as seguintes do mesmo grupo recebidas no mesmo lote são devolvidas (visibilidade 0) **sem serem tentadas**. O SQS FIFO as retém enquanto a primeira estiver em voo. Envio à DLQ não interrompe o grupo.
