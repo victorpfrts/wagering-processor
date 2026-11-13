@@ -112,6 +112,7 @@ const noopMetrics = (() => {
     outboxPublished: () => base.outboxPublished(),
     outboxPublishFailed: () => base.outboxPublishFailed(),
     messageHandled: () => base.messageHandled(),
+    pendingReferenceRetried: () => base.pendingReferenceRetried(),
   };
 })();
 

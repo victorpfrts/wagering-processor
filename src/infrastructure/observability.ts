@@ -24,4 +24,5 @@ export class NoopMetrics implements WageringMetrics {
   outboxPublished(): void {}
   outboxPublishFailed(): void {}
   messageHandled(): void {}
+  pendingReferenceRetried(): void {}
 }

@@ -41,6 +41,13 @@ Documento vivo. Tudo que o enunciado deixa em aberto e foi decidido fica aqui; e
 - Se a referência existe mas nunca saiu de pendente, o esgotamento rejeita com `REFERENCE_NOT_PROCESSED`.
 - O evento `WagerTransactionPendingReference` é publicado uma vez, na entrada no estado (não a cada tentativa).
 - Backoff sem jitter (determinístico e testável); a dispersão entre instâncias vem do intervalo de polling.
+- Worker em toda instância (`PENDING_REFERENCE_ENABLED`), consultando a cada 1s as transações vencidas (até 50 por rodada).
+- Cada pendência é reavaliada na sua própria transação SQL, pelo mesmo código de regras do caminho normal, com a wallet travada primeiro.
+- Com várias instâncias, quem chega depois relê a transação sob o lock, vê que já não está vencida e não faz nada.
+- Wallet travada ou banco fora: a pendência fica para a próxima rodada e não segura as outras.
+- Os eventos da resolução tardia usam o id da própria transação como `correlationId` (a requisição original já terminou).
+- A resolução não é disparada pela chegada da referência; espera a próxima tentativa agendada (no máximo o backoff corrente).
+- Justificativa do limite (6 tentativas, ~2 min): provedores reentregam em segundos; depois de 2 minutos a referência provavelmente não existe, e segurar a transação aberta atrasa a resposta definitiva ao provedor.
 
 ## Modelo
 - `WalletLedgerEntry` carrega `walletVersion` (versão da wallet depois do lançamento): numera a cadeia do ledger e permite detectar buraco.

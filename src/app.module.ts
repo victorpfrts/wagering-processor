@@ -23,6 +23,7 @@ import {
 import { ProcessWagerTransaction } from './application/process-wager-transaction.ts';
 import { PublishOutbox } from './application/publish-outbox.ts';
 import { WageringQueries } from './application/queries.ts';
+import { RetryPendingReferences } from './application/retry-pending-references.ts';
 import { APP_CONFIG, type AppConfig, loadConfig } from './config.ts';
 import { MikroOrmReadModel } from './infrastructure/db/mikro-orm-read-model.ts';
 import { MikroOrmUnitOfWork } from './infrastructure/db/mikro-orm-unit-of-work.ts';
@@ -100,6 +101,27 @@ export class AppModule {
               logger,
               metrics,
               config.outbox.batchSize,
+            ),
+        },
+        {
+          provide: RetryPendingReferences,
+          inject: [READ_MODEL, UNIT_OF_WORK, ProcessWagerTransaction, CLOCK, APP_LOGGER, METRICS],
+          useFactory: (
+            readModel: WageringReadModel,
+            unitOfWork: UnitOfWork,
+            processor: ProcessWagerTransaction,
+            clock: Clock,
+            logger: AppLogger,
+            metrics: WageringMetrics,
+          ) =>
+            new RetryPendingReferences(
+              readModel,
+              unitOfWork,
+              processor,
+              clock,
+              logger,
+              metrics,
+              config.pendingReference.batchSize,
             ),
         },
         WorkersService,

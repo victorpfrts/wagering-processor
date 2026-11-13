@@ -11,6 +11,11 @@ export interface AppConfig {
     pollIntervalMs: number;
     batchSize: number;
   };
+  pendingReference: {
+    enabled: boolean;
+    pollIntervalMs: number;
+    batchSize: number;
+  };
   consumer: {
     enabled: boolean;
     waitTimeSeconds: number;
@@ -62,6 +67,11 @@ export function loadConfig(env: Env = process.env): AppConfig {
       enabled: flag(env, 'OUTBOX_ENABLED', true),
       pollIntervalMs: integer(env, 'OUTBOX_POLL_INTERVAL_MS', 500),
       batchSize: integer(env, 'OUTBOX_BATCH_SIZE', 100),
+    },
+    pendingReference: {
+      enabled: flag(env, 'PENDING_REFERENCE_ENABLED', true),
+      pollIntervalMs: integer(env, 'PENDING_REFERENCE_POLL_INTERVAL_MS', 1000),
+      batchSize: integer(env, 'PENDING_REFERENCE_BATCH_SIZE', 50),
     },
     consumer: {
       enabled: flag(env, 'CONSUMER_ENABLED', true),

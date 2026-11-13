@@ -50,6 +50,17 @@ export class MikroOrmReadModel implements WageringReadModel {
       return record === null ? undefined : transactionToDomain(record);
     });
 
+  duePendingReferences: WageringReadModel['duePendingReferences'] = (now, limit) =>
+    this.read(async (em) => {
+      // Usa o índice parcial wager_tx_pending_reference_due.
+      const records = await em.find(
+        WagerTransactionSchema,
+        { status: 'PENDING_REFERENCE', nextAttemptAt: { $lte: now } },
+        { orderBy: { nextAttemptAt: 'asc' }, limit, fields: ['id', 'walletId'] },
+      );
+      return records.map((record) => ({ id: record.id, walletId: record.walletId }));
+    });
+
   reconciliationSnapshot: WageringReadModel['reconciliationSnapshot'] = (walletId) =>
     this.read(async (em) => {
       // Um único comando = um único snapshot: saldo e soma são da mesma foto

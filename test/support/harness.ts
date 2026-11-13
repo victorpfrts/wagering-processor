@@ -1,6 +1,6 @@
 import { MikroORM } from '@mikro-orm/postgresql';
 import { expect } from 'bun:test';
-import type { IdGenerator } from '../../src/application/ports.ts';
+import type { Clock, IdGenerator } from '../../src/application/ports.ts';
 import {
   ProcessWagerTransaction,
   type ProcessWagerTransactionCommand,
@@ -15,7 +15,11 @@ export interface Harness {
   orm: MikroORM;
   process: ProcessWagerTransaction;
   /** Outro use case sobre o mesmo banco, com dependências trocadas. */
-  processWith(options: { ids?: IdGenerator; lockTimeoutMs?: number }): ProcessWagerTransaction;
+  processWith(options: {
+    ids?: IdGenerator;
+    lockTimeoutMs?: number;
+    clock?: Clock;
+  }): ProcessWagerTransaction;
   close(): Promise<void>;
 }
 
@@ -30,7 +34,7 @@ export async function createHarness(): Promise<Harness> {
   const processWith: Harness['processWith'] = (options) =>
     new ProcessWagerTransaction(
       new MikroOrmUnitOfWork(orm, { lockTimeoutMs: options.lockTimeoutMs ?? 5000 }),
-      new SystemClock(),
+      options.clock ?? new SystemClock(),
       options.ids ?? new UuidV7Generator(),
     );
   return {

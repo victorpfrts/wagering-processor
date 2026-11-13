@@ -306,6 +306,7 @@ describe('POST /wallets/:walletId/reconciliation', () => {
         outboxPublished: () => {},
         outboxPublishFailed: () => {},
         messageHandled: () => {},
+        pendingReferenceRetried: () => {},
       },
     );
     const result = await queries.reconcile(wallet['id']);

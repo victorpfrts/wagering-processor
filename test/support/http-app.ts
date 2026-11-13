@@ -24,6 +24,7 @@ export async function startHttpApp(overrides: Partial<AppConfig['db']> = {}): Pr
     db: { ...base.db, ...overrides },
     outbox: { ...base.outbox, enabled: false },
     consumer: { ...base.consumer, enabled: false },
+    pendingReference: { ...base.pendingReference, enabled: false },
   };
   const app = await NestFactory.create(AppModule.register(config), { logger: false });
   await app.listen(0);

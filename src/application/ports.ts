@@ -109,6 +109,8 @@ export interface WageringReadModel {
     providerId: string,
     externalTransactionId: string,
   ): Promise<WagerTransaction | undefined>;
+  /** Transações PENDING_REFERENCE cuja próxima tentativa já venceu, da mais atrasada para a menos. */
+  duePendingReferences(now: Date, limit: number): Promise<{ id: string; walletId: string }[]>;
   /** Saldo e soma do ledger lidos no MESMO snapshot do banco. */
   reconciliationSnapshot(walletId: string): Promise<ReconciliationSnapshot | undefined>;
 }
@@ -128,6 +130,8 @@ export interface WageringMetrics {
   outboxPublishFailed(count: number): void;
   /** Desfecho de uma mensagem consumida da fila. */
   messageHandled(outcome: MessageOutcome): void;
+  /** Nova tentativa de uma transação PENDING_REFERENCE, com o status em que ela ficou. */
+  pendingReferenceRetried(status: string): void;
 }
 
 export type MessageOutcome = 'acked' | 'retried' | 'dead_lettered';

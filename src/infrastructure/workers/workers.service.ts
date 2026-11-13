@@ -13,6 +13,7 @@ import {
 } from '../../application/ports.ts';
 import { ProcessWagerTransaction } from '../../application/process-wager-transaction.ts';
 import { PublishOutbox } from '../../application/publish-outbox.ts';
+import { RetryPendingReferences } from '../../application/retry-pending-references.ts';
 import { APP_CONFIG, type AppConfig } from '../../config.ts';
 import { WagerMessageHandler } from '../../interfaces/sqs/wager-message-handler.ts';
 import { SqsConsumer } from '../sqs/sqs-consumer.ts';
@@ -30,6 +31,7 @@ export class WorkersService implements OnApplicationBootstrap, OnApplicationShut
     private readonly sqs: SQSClient,
     private readonly publishOutbox: PublishOutbox,
     private readonly processWagerTransaction: ProcessWagerTransaction,
+    private readonly retryPendingReferences: RetryPendingReferences,
   ) {}
 
   onApplicationBootstrap(): void {
@@ -44,6 +46,21 @@ export class WorkersService implements OnApplicationBootstrap, OnApplicationShut
             const { published, failed } = await this.publishOutbox.execute();
             // Com falha, descansa: o backoff das mensagens cuida do resto.
             return failed > 0 ? 0 : published;
+          },
+        }),
+      );
+    }
+    if (this.config.pendingReference.enabled) {
+      this.workers.push(
+        new PollingWorker({
+          name: 'pending-reference-retry',
+          idleDelayMs: this.config.pendingReference.pollIntervalMs,
+          errorDelayMs: this.config.pendingReference.pollIntervalMs * 4,
+          logger: this.logger,
+          // Sempre descansa entre rodadas: o que não venceu só vence com o tempo.
+          task: async () => {
+            await this.retryPendingReferences.execute();
+            return 0;
           },
         }),
       );
