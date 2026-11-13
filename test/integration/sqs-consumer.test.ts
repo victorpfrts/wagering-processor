@@ -475,6 +475,61 @@ describe('falhas transitórias → retry com backoff → DLQ pelo limite', () =>
     expect(await queueDepth(queues.main)).toBe(0);
   }, 40_000);
 
+  test('retry devolve as mensagens seguintes da mesma wallet sem tentá-las', async () => {
+    // O que este teste prova: no lote em que a primeira mensagem falha, as
+    // seguintes do grupo NÃO são processadas; voltam à fila intactas.
+    //
+    // O que ele não prova: que elas só reaparecem depois da primeira. Isso é
+    // garantia do SQS FIFO (grupo retido enquanto há mensagem em voo), e o
+    // LocalStack 3.8 não a emula — aqui elas reaparecem na hora.
+    const queues = await newQueues();
+    const walletId = await newWallet(h, '100.00');
+    const other = await newWallet(h, '100.00');
+    const first = wagerMessage(walletId, { money: brlProps('10.00') });
+    const second = wagerMessage(walletId, { money: brlProps('20.00') });
+    const third = wagerMessage(walletId, { money: brlProps('30.00') });
+    const unrelated = wagerMessage(other, { money: brlProps('5.00') });
+
+    const real = new WagerMessageHandler(h.process, silentLogger);
+    const attempts: { messageId: string; receiveCount: number }[] = [];
+    let failed = false;
+    const failingFirstOnce: MessageHandler = {
+      handle(body, meta) {
+        const { messageId } = JSON.parse(body) as { messageId: string };
+        attempts.push({ messageId, receiveCount: meta.receiveCount });
+        if (messageId === first.messageId && !failed) {
+          failed = true;
+          return Promise.resolve({ action: 'retry', reason: 'UNAVAILABLE' });
+        }
+        return real.handle(body, meta);
+      },
+    };
+
+    // as três já estão na fila, na ordem, quando o consumidor sobe
+    await send(queues, first, walletId);
+    await send(queues, second, walletId);
+    await send(queues, third, walletId);
+    await send(queues, unrelated, other);
+    const { outcomes } = startConsumer(queues, { handler: failingFirstOnce });
+    await until(() => outcomes.filter((outcome) => outcome === 'acked').length === 4, 30_000);
+
+    const firstAttemptOf = (messageId: string) =>
+      attempts.find((attempt) => attempt.messageId === messageId);
+    // a primeira foi tentada na 1ª entrega e falhou
+    expect(firstAttemptOf(first.messageId)?.receiveCount).toBe(1);
+    // as seguintes foram recebidas naquele lote e devolvidas SEM serem
+    // tentadas: a primeira tentativa delas já é uma segunda entrega
+    expect(firstAttemptOf(second.messageId)?.receiveCount).toBe(2);
+    expect(firstAttemptOf(third.messageId)?.receiveCount).toBe(2);
+    // a outra wallet não foi afetada
+    expect(firstAttemptOf(unrelated.messageId)?.receiveCount).toBe(1);
+
+    // todas aplicadas exatamente uma vez
+    expect(outcomes.filter((outcome) => outcome === 'retried')).toHaveLength(1);
+    expect(await expectLedgerConsistent(h, walletId)).toMatchObject({ balance: '40.00', debits: 3 });
+    expect(await queueDepth(queues.main)).toBe(0);
+  }, 40_000);
+
   test('erro inesperado do handler é tratado como transitório (não perde a mensagem)', async () => {
     const queues = await newQueues();
     const walletId = await newWallet(h, '100.00');

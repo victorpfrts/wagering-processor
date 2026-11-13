@@ -9,7 +9,10 @@ import {
 } from '@aws-sdk/client-sqs';
 import type { AppLogger, WageringMetrics } from '../../application/ports.ts';
 import { crashIfInjected } from '../fault-injection.ts';
-import type { MessageHandler } from '../../interfaces/sqs/wager-message-handler.ts';
+import type {
+  HandlingDecision,
+  MessageHandler,
+} from '../../interfaces/sqs/wager-message-handler.ts';
 
 export interface SqsConsumerOptions {
   queueName: string;
@@ -27,8 +30,10 @@ export interface SqsConsumerOptions {
  *
  *   - ack (DeleteMessage) só depois de o handler devolver 'ack', isto é,
  *     depois do commit no banco;
- *   - retry: a mensagem volta à fila com visibilidade crescente; ao atingir o
- *     maxReceiveCount da fila, o próprio SQS a move para a DLQ (redrive);
+ *   - retry: a mensagem volta à fila com visibilidade crescente e as seguintes
+ *     do mesmo grupo são devolvidas sem serem tentadas (a ordem por wallet se
+ *     mantém); ao atingir o maxReceiveCount da fila, o próprio SQS a move
+ *     para a DLQ (redrive);
  *   - dead-letter: vai direto para a DLQ, sem gastar tentativas;
  *   - stop(): para de buscar, termina o que está em andamento e devolve à
  *     fila (visibilidade 0) o que foi recebido e ainda não começou.
@@ -98,23 +103,33 @@ export class SqsConsumer {
   }
 
   private async processGroup(messages: Message[]): Promise<void> {
-    for (const message of messages) {
+    for (const [index, message] of messages.entries()) {
       if (!this.running) {
         // Desligando: não começa trabalho novo; devolve para outra instância.
         await this.changeVisibility(message, 0);
         continue;
       }
-      await this.processMessage(message);
+      const action = await this.processMessage(message);
+      if (action === 'retry') {
+        // A mensagem volta mais tarde. As seguintes do mesmo grupo (wallet)
+        // não passam na frente: são devolvidas agora, sem serem tentadas. O
+        // SQS FIFO só as entrega de novo depois que esta sair do caminho.
+        // (Se a mensagem foi para a DLQ, ela já saiu: o grupo segue.)
+        await Promise.all(
+          messages.slice(index + 1).map((pending) => this.changeVisibility(pending, 0)),
+        );
+        return;
+      }
     }
   }
 
-  private async processMessage(message: Message): Promise<void> {
+  private async processMessage(message: Message): Promise<HandlingDecision['action']> {
     const receiveCount = Number(message.Attributes?.['ApproximateReceiveCount'] ?? '1');
-    let decision;
+    let decision: HandlingDecision;
     try {
       decision = await this.handler.handle(message.Body ?? '', { receiveCount });
     } catch (error) {
-      decision = { action: 'retry' as const, reason: 'HANDLER_CRASHED' };
+      decision = { action: 'retry', reason: 'HANDLER_CRASHED' };
       this.logger.error('message handler crashed', {
         sqsMessageId: message.MessageId,
         error: error instanceof Error ? error.message : String(error),
@@ -153,6 +168,7 @@ export class SqsConsumer {
         error: error instanceof Error ? error.message : String(error),
       });
     }
+    return decision.action;
   }
 
   private async delete(message: Message): Promise<void> {

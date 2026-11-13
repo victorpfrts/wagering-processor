@@ -210,7 +210,7 @@ O handler traduz a mensagem para o mesmo caso de uso do HTTP e devolve uma **dec
 - **Conflito de idempotência vai para a DLQ**, e não para um ack silencioso: na fila não há resposta ao provedor, e descartar perderia a informação.
 - **Erro desconhecido é transitório.** Na dúvida, não se perde a mensagem; se persistir, o limite leva à DLQ.
 - **Limite:** 5 entregas, com visibilidade de 2 s dobrando até 60 s. Na 5ª falha transitória a aplicação grava a transação como `FAILED` e envia a mensagem à DLQ; o `maxReceiveCount = 5` da fila (redrive do SQS) é a rede de segurança para quando nem isso é possível.
-- **Ordem é otimização.** Uma mensagem em retry não segura as seguintes da mesma wallet; o sistema já tolera chegada fora de ordem.
+- **Ordem por wallet no retry.** Quando uma mensagem volta para nova tentativa, as seguintes do mesmo grupo (wallet) recebidas no mesmo lote são devolvidas sem serem tentadas, para não passarem na frente. Quem as retém até a primeira sair do caminho é o SQS FIFO. Se a mensagem vai para a DLQ, o grupo segue. Ainda assim a ordem é otimização: o sistema tolera chegada fora de ordem (`PENDING_REFERENCE`) e a correção não depende dela.
 - **`SIGTERM`:** interrompe o long polling, termina as mensagens em andamento e devolve as recebidas e não iniciadas com visibilidade 0.
 
 ### 6.7 Referências fora de ordem
@@ -269,7 +269,7 @@ Nenhum controller mudaria. Mensagens da fila continuam tratadas como canal inter
 | Nível | O que prova | Como |
 |---|---|---|
 | Unidade (122) | regras de negócio | domínio puro, sem I/O |
-| Integração (139) | schema, atomicidade, HTTP, outbox, fila | PostgreSQL e LocalStack reais |
+| Integração (140) | schema, atomicidade, HTTP, outbox, fila | PostgreSQL e LocalStack reais |
 | Concorrência (18) | corridas e quedas | conexões paralelas e **processos reais** |
 
 - **Sem mocks de infraestrutura.** Onde é preciso provocar uma falha, ela é injetada em volta do componente real (um publisher que falha para um evento específico, um cliente SQS que descarta o primeiro ack).
@@ -312,6 +312,11 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 - **Sem DLQ para eventos de saída:** um evento que nunca publica segura os seguintes da mesma wallet.
 - **Métricas por instância;** não há Prometheus, dashboard nem OpenTelemetry no compose.
 - **Sem autenticação** (seção 7) e sem limite de requisições por provedor.
+
+**Fila**
+
+- **A ordem no retry depende do broker e não está provada por teste.** O LocalStack 3.8 não retém o grupo enquanto há mensagem em voo, então as mensagens devolvidas reaparecem na hora. O teste prova que elas não são processadas no lote da falha; a retenção até a primeira passar é comportamento do SQS real, não verificado aqui.
+- **Mensagens devolvidas acumulam recebimentos sem terem sido tentadas.** Depois de vários retries da primeira, as seguintes chegam perto do limite de 5 entregas; uma falha transitória nelas pode gravar `FAILED` sem novas tentativas.
 
 **Ambiente**
 

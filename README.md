@@ -47,9 +47,9 @@ Os testes de integração e de concorrência usam **PostgreSQL e SQS reais** (os
 
 ```sh
 bun run infra:up           # uma vez
-bun test                   # tudo: 279 testes, cerca de 40 s
+bun test                   # tudo: 280 testes, cerca de 40 s
 bun run test:unit          # domínio puro, sem infraestrutura (122 testes)
-bun run test:integration   # schema, use cases, HTTP, outbox, fila, observabilidade (139 testes)
+bun run test:integration   # schema, use cases, HTTP, outbox, fila, observabilidade (140 testes)
 bun run test:concurrency   # corridas reais, 3 processos, kill -9, reinício (18 testes)
 bun run typecheck
 ```

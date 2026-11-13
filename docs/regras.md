@@ -163,7 +163,10 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 - Rede de segurança: se nem o registro for possível (banco fora), a mensagem volta à fila e o `maxReceiveCount = 5` da fila (redrive do SQS) a move para a DLQ, sem linha de transação.
 - `FAILED` é terminal: o replay devolve `FAILED` (HTTP 500) e a operação só pode ser refeita com outro `externalTransactionId`.
 - `FAILED` só nasce da fila. No HTTP, falha transitória é 503 e a decisão de desistir é do provedor.
-- Ordem: grupos (wallets) diferentes em paralelo; dentro do grupo, na ordem do lote. Uma mensagem em retry **não** segura as seguintes — ordem é otimização, e o sistema já tolera chegada fora de ordem (`PENDING_REFERENCE`).
+- Ordem: grupos (wallets) diferentes em paralelo; dentro do grupo, na ordem do lote.
+- Retry de uma mensagem: as seguintes do mesmo grupo recebidas no mesmo lote são devolvidas (visibilidade 0) **sem serem tentadas**. O SQS FIFO as retém enquanto a primeira estiver em voo. Envio à DLQ não interrompe o grupo.
+- Efeito colateral: as devolvidas acumulam recebimentos sem terem sido tentadas e se aproximam do limite de 5.
+- O LocalStack 3.8 não emula a retenção do grupo: nos testes as devolvidas reaparecem na hora. A ordem continua sendo otimização; a correção vem do banco.
 - `SIGTERM`: interrompe o long polling, termina as mensagens em andamento e devolve as recebidas e não iniciadas com visibilidade 0.
 - Falha ao avisar o broker (ack, visibilidade) é só logada: a mensagem reaparece e o inbox absorve.
 - Eventos de saída em `wager-events.fifo`, grupo = `walletId`, deduplicação = `eventId`.
