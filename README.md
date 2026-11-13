@@ -39,7 +39,7 @@ bun run migration:up    # aplica o schema
 bun run dev             # http://localhost:3000, com recarga automática
 ```
 
-Para desfazer: `bun run migration:down` reverte o schema e `bun run infra:down` remove os containers.
+Para desfazer: `bun run migration:down` reverte a migration mais recente (uma por vez) e `bun run infra:down` remove os containers.
 
 ## Testes
 
@@ -47,9 +47,9 @@ Os testes de integração e de concorrência usam **PostgreSQL e SQS reais** (os
 
 ```sh
 bun run infra:up           # uma vez
-bun test                   # tudo: 284 testes, cerca de 40 s
+bun test                   # tudo: 287 testes, cerca de 40 s
 bun run test:unit          # domínio puro, sem infraestrutura (126 testes)
-bun run test:integration   # schema, use cases, HTTP, outbox, fila, observabilidade (140 testes)
+bun run test:integration   # schema, use cases, HTTP, outbox, fila, observabilidade (143 testes)
 bun run test:concurrency   # corridas reais, 3 processos, kill -9, reinício (18 testes)
 bun run typecheck
 ```

@@ -60,13 +60,13 @@ interfaces  →  application  →  domain
 
 ## 4. Modelo de dados e garantias no schema
 
-Cinco tabelas: `wallets`, `wager_transactions`, `wallet_ledger_entries`, `inbox_messages`, `outbox_messages`. Uma migration com SQL explícito e `down` testado (up → down → up).
+Cinco tabelas: `wallets`, `wager_transactions`, `wallet_ledger_entries`, `inbox_messages`, `outbox_messages`. Duas migrations com SQL explícito e `down` testado: o schema inicial e a mudança que escopou a idempotency key por provedor (criando o índice novo antes de remover o antigo, para a tabela nunca ficar sem a garantia).
 
 | Garantia | Mecanismo no PostgreSQL |
 |---|---|
 | Uma wallet por player + moeda | `UNIQUE (player_id, currency)` |
 | Saldo nunca negativo | `CHECK (balance >= 0)` |
-| Idempotência | `UNIQUE (idempotency_key)` e `UNIQUE (provider_id, external_transaction_id)` |
+| Idempotência | `UNIQUE (provider_id, idempotency_key)` e `UNIQUE (provider_id, external_transaction_id)` |
 | Uma reversão efetiva por transação | índice único parcial em `reference_transaction_id` |
 | Estado terminal não muda; transação não é apagada | trigger |
 | Ledger só aceita inserção | trigger que recusa `UPDATE`, `DELETE` e `TRUNCATE` |
@@ -151,7 +151,7 @@ Toda operação financeira trava a linha da wallet como primeiro passo da transa
 
 ### 6.4 Idempotência ([ADR-003](docs/adr/2026-11-12-idempotencia-chave-e-hash-de-payload.md))
 
-A própria `wager_transactions` é o registro de idempotência: guarda a chave, o hash do payload e o **saldo observado quando a transação foi resolvida**. É esse saldo que o replay devolve, não o atual.
+A própria `wager_transactions` é o registro de idempotência: guarda a chave, o hash do payload e o **saldo observado quando a transação foi resolvida**. A chave é **escopada pelo provedor**: a mesma chave usada por dois provedores identifica duas operações independentes, e um provedor não consegue ocupar nem consultar a chave de outro. É esse saldo que o replay devolve, não o atual.
 
 **Algoritmo do `payloadHash`:** SHA-256, em hexadecimal, do JSON canônico (chaves ordenadas em todos os níveis, campos `undefined` omitidos) de:
 
@@ -269,7 +269,7 @@ Nenhum controller mudaria. Mensagens da fila continuam tratadas como canal inter
 | Nível | O que prova | Como |
 |---|---|---|
 | Unidade (126) | regras de negócio | domínio puro, sem I/O |
-| Integração (140) | schema, atomicidade, HTTP, outbox, fila | PostgreSQL e LocalStack reais |
+| Integração (143) | schema, atomicidade, HTTP, outbox, fila | PostgreSQL e LocalStack reais |
 | Concorrência (18) | corridas e quedas | conexões paralelas e **processos reais** |
 
 - **Sem mocks de infraestrutura.** Onde é preciso provocar uma falha, ela é injetada em volta do componente real (um publisher que falha para um evento específico, um cliente SQS que descarta o primeiro ack).
@@ -300,7 +300,6 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 - A **rodada não é um agregado**. Não impedimos um `WIN` depois de a `BET` da rodada ter sido revertida, nem duas `BET` na mesma rodada.
 - **`FAILED` depende de o banco responder.** Se o banco está fora do ar durante todas as entregas, a mensagem vai para a DLQ pelo redrive do SQS sem deixar transação; a auditoria desse caso fica só na fila. `FAILED` também só nasce da fila: no HTTP, falha transitória devolve 503 e quem decide desistir é o provedor.
 - **`FAILED` é terminal, mesmo nascendo de falha transitória.** Uma indisponibilidade que dure as 5 entregas (cerca de 30 s de backoff) mata a operação em definitivo. A idempotency key fica ocupada: reenviar a mensagem da DLQ para a fila principal **não a reprocessa**, só devolve o `FAILED` gravado. A DLQ serve para auditoria e diagnóstico; a recuperação é o provedor emitir uma nova operação (novo `externalTransactionId`). É a leitura literal do enunciado (`FAILED` terminal), e o custo dela é este.
-- **A idempotency key é única globalmente, não por provedor.** Dois provedores que usem a mesma chave colidem: o segundo recebe conflito (409). O formato recomendado (`{providerId}:{externalTransactionId}`) evita a colisão acidental, mas nada impede a deliberada enquanto não houver autenticação. Não há vazamento de dados: o replay exige o mesmo payload, que inclui o `providerId`.
 - O `correlationId` da requisição original **não é guardado na transação**. Os eventos de uma resolução tardia usam o id da transação como correlação.
 - Reversão parcial está fora de escopo, como o enunciado define. Não há conversão entre moedas.
 
@@ -332,9 +331,8 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 
 1. Modelar a rodada como agregado, com estado próprio.
 2. Rever o `FAILED` por esgotamento: hoje ele impede o reprocessamento pela DLQ. Uma alternativa é um estado reabrível por um operador, com auditoria.
-3. Escopar a idempotency key por provedor (`UNIQUE (provider_id, idempotency_key)`).
-4. Persistir o `correlationId` na transação.
-5. Retenção e particionamento para inbox, outbox e ledger.
-6. Medir o publisher da outbox isolado e com a fila real; depois avaliar `LISTEN/NOTIFY` como gatilho, mantendo o polling como rede de segurança.
-7. Keycloak, conforme o desenho da seção 7.
-8. Rastreamento distribuído com OpenTelemetry.
+3. Persistir o `correlationId` na transação.
+4. Retenção e particionamento para inbox, outbox e ledger.
+5. Medir o publisher da outbox isolado e com a fila real; depois avaliar `LISTEN/NOTIFY` como gatilho, mantendo o polling como rede de segurança.
+6. Keycloak, conforme o desenho da seção 7.
+7. Rastreamento distribuído com OpenTelemetry.

@@ -23,7 +23,11 @@ export interface WalletRepository {
 
 export interface WagerTransactionRepository {
   findById(id: string): Promise<WagerTransaction | undefined>;
-  findByIdempotencyKey(idempotencyKey: string): Promise<WagerTransaction | undefined>;
+  /** A chave é escopada pelo provedor: a mesma chave em provedores diferentes não colide. */
+  findByIdempotencyKey(
+    providerId: string,
+    idempotencyKey: string,
+  ): Promise<WagerTransaction | undefined>;
   findByExternalId(
     providerId: string,
     externalTransactionId: string,

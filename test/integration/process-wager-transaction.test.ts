@@ -116,6 +116,31 @@ describe('idempotência', () => {
     expect(await transactionRows(h, walletId)).toHaveLength(1);
   });
 
+  test('a mesma key em provedores diferentes não colide: são operações independentes', async () => {
+    const walletId = await newWallet(h, '100.00');
+    const fromA = command(walletId, {
+      providerId: 'provider-a',
+      idempotencyKey: 'shared-key',
+      money: brlProps('10.00'),
+    });
+    const fromB = command(walletId, {
+      providerId: 'provider-b',
+      idempotencyKey: 'shared-key',
+      money: brlProps('20.00'),
+    });
+
+    const a = await h.process.execute(fromA);
+    const b = await h.process.execute(fromB);
+
+    expect(a).toMatchObject({ status: 'PROCESSED', idempotentReplay: false });
+    expect(b).toMatchObject({ status: 'PROCESSED', idempotentReplay: false });
+    expect(b.transactionId).not.toBe(a.transactionId);
+    expect(await expectLedgerConsistent(h, walletId)).toMatchObject({ balance: '70.00', debits: 2 });
+    // cada provedor recebe de volta o resultado da SUA operação
+    expect(await h.process.execute(fromA)).toEqual({ ...a, idempotentReplay: true });
+    expect(await h.process.execute(fromB)).toEqual({ ...b, idempotentReplay: true });
+  });
+
   test('mesmo id externo sob outra key é conflito', async () => {
     const walletId = await newWallet(h, '100.00');
     const bet = command(walletId);

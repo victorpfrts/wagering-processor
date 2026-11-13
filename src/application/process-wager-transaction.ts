@@ -90,7 +90,7 @@ const MAX_DUPLICATE_KEY_RETRIES = 3;
  *
  * Dentro de UMA transação SQL:
  *   1. trava a wallet (FOR UPDATE) — serializa tudo que toca o mesmo saldo;
- *   2. procura a idempotency key — replay devolve o resultado original,
+ *   2. procura a idempotency key (do provedor) — replay devolve o resultado original,
  *      payload divergente é conflito;
  *   3. aplica as regras de negócio (função pura do domínio);
  *   4. grava transação, lançamento, saldo e eventos (outbox).
@@ -183,7 +183,10 @@ export class ProcessWagerTransaction {
 
     const outcome = await this.unitOfWork.run(async (context) => {
       const existing =
-        (await context.transactions.findByIdempotencyKey(command.idempotencyKey)) ??
+        (await context.transactions.findByIdempotencyKey(
+          command.providerId,
+          command.idempotencyKey,
+        )) ??
         (await context.transactions.findByExternalId(
           command.providerId,
           command.externalTransactionId,
@@ -292,7 +295,10 @@ export class ProcessWagerTransaction {
       command.inbox !== undefined && (await this.registerInInbox(context, command.inbox));
 
     // 2. Idempotência, já sob o lock.
-    const sameKey = await context.transactions.findByIdempotencyKey(command.idempotencyKey);
+    const sameKey = await context.transactions.findByIdempotencyKey(
+      command.providerId,
+      command.idempotencyKey,
+    );
     const sameExternalId =
       sameKey ??
       (await context.transactions.findByExternalId(

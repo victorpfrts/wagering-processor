@@ -2,7 +2,11 @@ import { MikroORM } from '@mikro-orm/postgresql';
 import { loadConfig } from '../../config.ts';
 import { buildOrmConfig } from './orm-config.ts';
 
-/** Uso: bun src/infrastructure/db/migrate.ts up | down */
+/**
+ * Uso: bun src/infrastructure/db/migrate.ts up | down
+ *   up    aplica todas as migrations pendentes
+ *   down  reverte UMA migration (a mais recente)
+ */
 const direction = process.argv[2] ?? 'up';
 if (direction !== 'up' && direction !== 'down') {
   console.error(`Unknown direction "${direction}". Use "up" or "down".`);

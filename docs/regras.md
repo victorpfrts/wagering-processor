@@ -13,7 +13,7 @@ Documento vivo. Tudo que o enunciado deixa em aberto e foi decidido fica aqui; e
 - Mesma chave + mesmo hash → replay com o resultado original (inclui o saldo daquele momento).
 - Mesma chave + hash diferente → conflito.
 - Chave diferente para o mesmo `(providerId, externalTransactionId)` → conflito.
-- A chave é única globalmente, não por provedor: a mesma chave usada por dois provedores colide (conflito). Limitação conhecida.
+- A chave é escopada pelo provedor (`UNIQUE (provider_id, idempotency_key)`): a mesma chave em provedores diferentes são operações independentes.
 
 ## Reversões
 - Uma transação tem no máximo **uma reversão efetiva** (`REFUND` ou `ROLLBACK`). Mais restrito que a regra 4 do enunciado, para impedir crédito duplo de uma mesma BET.
@@ -64,7 +64,7 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 |---|---|
 | Uma wallet por player + moeda | `UNIQUE (player_id, currency)` |
 | Saldo nunca negativo | `CHECK (balance >= 0)` |
-| Idempotência | `UNIQUE (idempotency_key)` e `UNIQUE (provider_id, external_transaction_id)` |
+| Idempotência | `UNIQUE (provider_id, idempotency_key)` e `UNIQUE (provider_id, external_transaction_id)` |
 | Uma reversão efetiva por referência | índice único parcial em `reference_transaction_id` (`PROCESSED`, `REFUND`/`ROLLBACK`) |
 | Estado terminal não muda; transação não é apagada | trigger `wager_tx_guard` |
 | Coerência status × `failure_code`, `processed_at`, `next_attempt_at`, saldo resultante | `CHECK`s |
@@ -77,7 +77,8 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 
 - `wager_transactions.wallet_id` **não** é chave estrangeira: transação para wallet inexistente é gravada como `REJECTED` (`WALLET_NOT_FOUND`).
 - `walletId` precisa ser UUID (coluna `uuid`); outro formato é payload inválido (400).
-- Migrations são classes MikroORM com SQL explícito e `down` testado (up → down → up).
+- Migrations são classes MikroORM com SQL explícito e `down` testado. `migration:down` reverte uma migration por vez.
+- A segunda migration (escopo da idempotency key) cria o índice novo antes de remover o antigo; o `down` é recusado se dois provedores já compartilham uma chave.
 - Cada arquivo de teste de integração cria um banco próprio, porque o ledger não permite limpeza.
 
 ## Limitações conhecidas

@@ -8,7 +8,8 @@ const ADMIN_URL =
 export interface TestDatabase {
   url: string;
   sql: SQL;
-  migrate(direction: 'up' | 'down'): Promise<void>;
+  /** up: aplica tudo. down: reverte a última migration. reset: reverte todas. */
+  migrate(direction: 'up' | 'down' | 'reset'): Promise<void>;
   drop(): Promise<void>;
 }
 
@@ -26,10 +27,12 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   target.pathname = `/${name}`;
   const url = target.toString();
 
-  const migrate = async (direction: 'up' | 'down'): Promise<void> => {
+  const migrate = async (direction: 'up' | 'down' | 'reset'): Promise<void> => {
     const orm = await MikroORM.init({ ...buildOrmConfig(url), debug: false, logger: () => {} });
     try {
-      await (direction === 'up' ? orm.migrator.up() : orm.migrator.down());
+      if (direction === 'up') await orm.migrator.up();
+      else if (direction === 'down') await orm.migrator.down();
+      else await orm.migrator.down({ to: 0 });
     } finally {
       await orm.close(true);
     }

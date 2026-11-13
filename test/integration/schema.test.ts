@@ -47,11 +47,50 @@ describe('migrations', () => {
         'wallets',
       ];
       expect(await tables()).toEqual(expected);
-      await scratch.migrate('down');
+      await scratch.migrate('reset');
       expect(await tables()).toEqual([]);
       expect(await functions()).toBe(0);
       await scratch.migrate('up');
       expect(await tables()).toEqual(expected);
+    } finally {
+      await scratch.drop();
+    }
+  });
+
+  test('a migration do escopo da idempotency key é reversível passo a passo', async () => {
+    const scratch = await createTestDatabase();
+    try {
+      const uniques = async () =>
+        (
+          await scratch.sql`
+            select conname from pg_constraint
+             where conrelid = 'wager_transactions'::regclass and contype = 'u'
+               and conname like '%idempotency%'`
+        ).map((r: { conname: string }) => r.conname);
+
+      expect(await uniques()).toEqual(['wager_tx_provider_idempotency_key_unique']);
+      await scratch.migrate('down'); // só a última migration
+      expect(await uniques()).toEqual(['wager_tx_idempotency_key_unique']);
+      await scratch.migrate('up');
+      expect(await uniques()).toEqual(['wager_tx_provider_idempotency_key_unique']);
+    } finally {
+      await scratch.drop();
+    }
+  });
+
+  test('reverter o escopo é recusado se dois provedores já usam a mesma chave', async () => {
+    const scratch = await createTestDatabase();
+    try {
+      const walletId = await seedWallet(scratch.sql);
+      const shared = { walletId, idempotencyKey: 'shared-key' };
+      await insertTransaction(scratch.sql, { ...shared, providerId: 'provider-a' });
+      await insertTransaction(scratch.sql, { ...shared, providerId: 'provider-b' });
+
+      await expect(scratch.migrate('down')).rejects.toThrow();
+      // nada mudou: a garantia por provedor continua de pé
+      await expect(
+        insertTransaction(scratch.sql, { ...shared, providerId: 'provider-a', externalId: 'x' }),
+      ).rejects.toThrow(/wager_tx_provider_idempotency_key_unique/);
     } finally {
       await scratch.drop();
     }
@@ -216,13 +255,20 @@ describe('wallet_ledger_entries', () => {
 });
 
 describe('wager_transactions', () => {
-  test('idempotency key é única', async () => {
+  test('idempotency key é única por provedor', async () => {
     const walletId = await seedWallet(db.sql);
     await insertTransaction(db.sql, { walletId, idempotencyKey: 'key-1', externalId: 'a' });
     await violates(
       insertTransaction(db.sql, { walletId, idempotencyKey: 'key-1', externalId: 'b' }),
-      /wager_tx_idempotency_key_unique/,
+      /wager_tx_provider_idempotency_key_unique/,
     );
+    // outro provedor pode usar a mesma chave: as chaves não colidem entre provedores
+    await insertTransaction(db.sql, {
+      walletId,
+      idempotencyKey: 'key-1',
+      externalId: 'c',
+      providerId: 'provider-b',
+    });
   });
 
   test('(providerId, externalTransactionId) é único, mesmo com outra key', async () => {

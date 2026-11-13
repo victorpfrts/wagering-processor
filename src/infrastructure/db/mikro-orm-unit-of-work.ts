@@ -107,7 +107,7 @@ function transactionRepository(em: SqlEntityManager): WagerTransactionRepository
   };
   return {
     findById: (id) => one({ id }),
-    findByIdempotencyKey: (idempotencyKey) => one({ idempotencyKey }),
+    findByIdempotencyKey: (providerId, idempotencyKey) => one({ providerId, idempotencyKey }),
     findByExternalId: (providerId, externalTransactionId) =>
       one({ providerId, externalTransactionId }),
     async hasProcessedReversal(referenceTransactionId) {
