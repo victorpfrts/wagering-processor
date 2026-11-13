@@ -78,7 +78,7 @@ Cinco tabelas: `wallets`, `wager_transactions`, `wallet_ledger_entries`, `inbox_
 
 A penúltima linha merece destaque. Um `CHECK` não alcança duas tabelas, então um trigger adiado confere, no commit de toda transação que toca wallet ou ledger, que o saldo e a versão da wallet são os do último lançamento. Alterar o saldo sem lançar, ou lançar sem alterar o saldo, faz o commit falhar. A invariante final do desafio (`wallet.balance == saldo do ledger`) é imposta pelo banco em cada transação, e não só verificada depois pela reconciliação.
 
-- **Custo:** uma leitura por índice a mais em cada commit financeiro. Não medi o impacto isolado.
+- **Custo:** uma leitura por índice a mais em cada commit financeiro. Medido em cerca de 1,4 % por transação, abaixo do ruído da medição ([`docs/load-test.md`](docs/load-test.md)).
 - **Alternativa descartada:** confiar apenas na reconciliação, que detecta a divergência depois que ela já existe.
 
 Cada linha da tabela tem um teste que tenta violar a garantia direto no banco (`test/integration/schema.test.ts`).
@@ -308,6 +308,7 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 - **Wallet quente:** a vazão por wallet é limitada pelo lock. Sob disputa acima de 3 s, o provedor recebe 503 e precisa reenviar.
 - **Polling:** três workers por instância consultam o banco em intervalos fixos; a carga de consulta cresce com o número de instâncias.
 - **Sem retenção:** inbox, outbox publicada e transações crescem sem limpeza nem particionamento.
+- **A outbox atrasa sob carga sustentada.** No teste de carga o atraso chegou a 15–26 s e só zerou depois do pico. Nada se perde, mas os eventos chegam defasados. A causa não foi isolada ([`docs/load-test.md`](docs/load-test.md)).
 - **Sem DLQ para eventos de saída:** um evento que nunca publica segura os seguintes da mesma wallet.
 - **Métricas por instância;** não há Prometheus, dashboard nem OpenTelemetry no compose.
 - **Sem autenticação** (seção 7) e sem limite de requisições por provedor.
@@ -315,14 +316,18 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 **Ambiente**
 
 - O LocalStack está fixado na versão 3.8.
-- O trigger de consistência no commit não teve o custo medido isoladamente.
+- Os números de desempenho vêm de um notebook com emulador de fila e variaram quase 3 vezes entre execuções; servem como ordem de grandeza.
 
-## 12. Com mais tempo
+## 12. Teste de carga
+
+`bun run test:load`, contra as 3 réplicas. Ambiente, metodologia, números e análise em [`docs/load-test.md`](docs/load-test.md). Em resumo: nenhuma inconsistência e nenhum erro em cerca de 250 mil requisições; centenas a pouco mais de mil requisições por segundo neste ambiente, com muita variação; a outbox é o primeiro ponto a saturar; uma wallet isolada processa cerca de 214 operações por segundo.
+
+## 13. Com mais tempo
 
 1. Modelar a rodada como agregado, com estado próprio.
 2. Reprocessamento assistido da DLQ (redrive manual com auditoria).
 3. Persistir o `correlationId` na transação.
 4. Retenção e particionamento para inbox, outbox e ledger.
-5. Substituir o polling da outbox por `LISTEN/NOTIFY` como gatilho, mantendo o polling como rede de segurança.
+5. Medir o publisher da outbox isolado e com a fila real; depois avaliar `LISTEN/NOTIFY` como gatilho, mantendo o polling como rede de segurança.
 6. Keycloak, conforme o desenho da seção 7.
 7. Rastreamento distribuído com OpenTelemetry.

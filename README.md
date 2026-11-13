@@ -7,6 +7,7 @@ O sistema continua correto quando as mensagens chegam **duplicadas**, **fora de 
 - Decisões, trade-offs e limitações: [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - Todas as regras e interpretações adotadas: [`docs/regras.md`](docs/regras.md)
 - Registros de decisão (ADRs): [`docs/adr/`](docs/adr)
+- Teste de carga: [`docs/load-test.md`](docs/load-test.md)
 
 ## Stack
 
@@ -52,6 +53,8 @@ bun run test:integration   # schema, use cases, HTTP, outbox, fila, observabilid
 bun run test:concurrency   # corridas reais, 3 processos, kill -9, reinício (18 testes)
 bun run typecheck
 ```
+
+Teste de carga (diferencial): `bun run docker:up && bun run test:load`. Resultados e análise em [`docs/load-test.md`](docs/load-test.md).
 
 | Exigência da seção 13 | Onde está |
 |---|---|
