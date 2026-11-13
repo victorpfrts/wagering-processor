@@ -123,7 +123,9 @@ async function runScenario(name: string, wallets: Wallet[]): Promise<ScenarioRes
     const dice = Math.random();
     if (dice < 0.1 && sent.length > 0) return sent[Math.floor(Math.random() * sent.length)] as Json;
     const wallet = wallets[Math.floor(Math.random() * wallets.length)] as Wallet;
-    const cents = 100 + Math.floor(Math.random() * 900);
+    // Valor entre 1.00 e 9.99 montado como texto: nenhuma conta com dinheiro em number.
+    const whole = 1 + Math.floor(Math.random() * 9);
+    const fraction = String(Math.floor(Math.random() * 100)).padStart(2, '0');
     const body = {
       providerId: 'load-provider',
       externalTransactionId: `load-${uuid()}`,
@@ -132,7 +134,7 @@ async function runScenario(name: string, wallets: Wallet[]): Promise<ScenarioRes
       roundId: `round-${Math.floor(Math.random() * 1000)}`,
       gameId: 'fortune-chimp',
       kind: dice < 0.75 ? 'BET' : 'WIN',
-      money: { amount: (cents / 100).toFixed(2), currency: 'BRL' },
+      money: { amount: `${whole}.${fraction}`, currency: 'BRL' },
     };
     if (sent.length < 5000) sent.push(body);
     return body;

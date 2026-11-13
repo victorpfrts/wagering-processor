@@ -3,6 +3,7 @@ import {
   IdempotencyConflictError,
   TransientInfrastructureError,
 } from '../../src/application/errors.ts';
+import { Money } from '../../src/domain/money.ts';
 import type { WagerTransactionResult } from '../../src/application/process-wager-transaction.ts';
 import {
   brlProps,
@@ -158,8 +159,13 @@ describe('disputa de saldo na mesma wallet', () => {
     expect(state.credits).toBe(wins + 1); // + abertura
     expect(state.debits).toBe(acceptedBets);
     expect(state.version).toBe(1 + wins + acceptedBets);
-    const expectedCents = 5000 + wins * 725 - acceptedBets * 410;
-    expect(state.balance).toBe((expectedCents / 100).toFixed(2));
+    // saldo esperado calculado com Money, como o sistema faz — nunca com number
+    let expected = Money.from(brlProps('50.00'));
+    for (let i = 0; i < wins; i += 1) expected = expected.add(Money.from(brlProps('7.25')));
+    for (let i = 0; i < acceptedBets; i += 1) {
+      expected = expected.subtract(Money.from(brlProps('4.10')));
+    }
+    expect(state.balance).toBe(expected.toJSON().amount);
   });
 
   test('REFUND e ROLLBACK simultâneos da mesma BET → só uma reversão', async () => {

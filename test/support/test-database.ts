@@ -139,7 +139,7 @@ export async function seedWallet(sql: SQL, balance = '100.00'): Promise<string> 
   const walletId = uuid();
   await sql.begin(async (tx) => {
     await insertWalletRow(tx, { id: walletId, balance });
-    if (Number.parseFloat(balance) > 0) {
+    if (!/^0+(\.0+)?$/.test(balance)) {
       const txId = await insertTransaction(tx, {
         walletId,
         kind: 'OPENING',
