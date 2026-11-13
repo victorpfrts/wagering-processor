@@ -18,6 +18,8 @@ export function buildOrmConfig(clientUrl: string, options: OrmConfigOptions = {}
       tableName: 'schema_migrations',
       transactional: true,
       allOrNothing: true,
+      // As migrations são SQL escrito à mão; não há schema gerado para comparar.
+      snapshot: false,
     },
   });
 }
