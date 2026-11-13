@@ -77,7 +77,11 @@ export class WorkersService implements OnApplicationBootstrap, OnApplicationShut
             retryBaseSeconds: this.config.consumer.retryBaseSeconds,
             retryMaxSeconds: this.config.consumer.retryMaxSeconds,
           },
-          new WagerMessageHandler(this.processWagerTransaction, this.logger),
+          new WagerMessageHandler(
+            this.processWagerTransaction,
+            this.logger,
+            this.config.consumer.maxReceiveCount,
+          ),
           this.logger,
           this.metrics,
         ),

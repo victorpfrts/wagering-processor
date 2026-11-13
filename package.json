@@ -15,7 +15,8 @@
     "test:integration": "bun test test/integration",
     "test:concurrency": "bun test test/concurrency",
     "docker:up": "docker compose --profile app up -d --build --wait",
-    "docker:down": "docker compose --profile app down -v"
+    "docker:down": "docker compose --profile app down -v",
+    "test:load": "bun scripts/load-test.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

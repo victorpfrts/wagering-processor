@@ -137,3 +137,33 @@ export class WagerTransactionPendingReference extends IntegrationEvent<WagerTran
     });
   }
 }
+
+export interface WagerTransactionFailedData extends TransactionSummary {
+  failureCode: FailureCode;
+  failedAt: string;
+}
+
+/** Falha permanente de infraestrutura: a operação não foi aplicada e não será. */
+export class WagerTransactionFailed extends IntegrationEvent<WagerTransactionFailedData> {
+  readonly eventType = 'WagerTransactionFailed';
+  readonly version = 1;
+
+  static from(transaction: WagerTransaction, ctx: EventContext): WagerTransactionFailed {
+    const { failureCode, processedAt } = transaction;
+    if (
+      transaction.status !== WagerTransactionStatus.Failed ||
+      failureCode === undefined ||
+      processedAt === undefined
+    ) {
+      throw new ValidationError('Transaction is not failed');
+    }
+    return new WagerTransactionFailed({
+      ...envelope(transaction, ctx),
+      data: {
+        ...summarize(transaction),
+        failureCode,
+        failedAt: processedAt.toISOString(),
+      },
+    });
+  }
+}

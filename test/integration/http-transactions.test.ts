@@ -1,4 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import {
+  ProcessWagerTransaction,
+  type ProcessWagerTransactionCommand,
+} from '../../src/application/process-wager-transaction.ts';
 import { type HttpApp, startHttpApp } from '../support/http-app.ts';
 import { seedWallet, uuid } from '../support/test-database.ts';
 
@@ -149,6 +153,26 @@ describe('POST /wagering/transactions', () => {
       const [{ count }] =
         await http.db.sql`select count(*)::int as count from wager_transactions where wallet_id = ${walletId}`;
       expect(count).toBe(0);
+    });
+  });
+
+  test('500: replay de uma transação FAILED (terminal) devolve o desfecho gravado', async () => {
+    const walletId = await seedWallet(http.db.sql);
+    const payload = body(walletId);
+    // a operação foi dada como perdida por outro caminho (fila com tentativas esgotadas)
+    await http.app.get(ProcessWagerTransaction).recordFailure({
+      ...(payload as unknown as ProcessWagerTransactionCommand),
+      idempotencyKey: `${payload.providerId}:${payload.externalTransactionId}`,
+      correlationId: 'c',
+    });
+
+    const response = await submit(payload);
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      transactionId: expect.any(String),
+      status: 'FAILED',
+      failureCode: 'INTERNAL_ERROR',
+      idempotentReplay: true,
     });
   });
 

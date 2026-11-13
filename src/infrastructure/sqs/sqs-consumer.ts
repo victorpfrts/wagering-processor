@@ -112,7 +112,7 @@ export class SqsConsumer {
     const receiveCount = Number(message.Attributes?.['ApproximateReceiveCount'] ?? '1');
     let decision;
     try {
-      decision = await this.handler.handle(message.Body ?? '');
+      decision = await this.handler.handle(message.Body ?? '', { receiveCount });
     } catch (error) {
       decision = { action: 'retry' as const, reason: 'HANDLER_CRASHED' };
       this.logger.error('message handler crashed', {

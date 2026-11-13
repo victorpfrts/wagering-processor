@@ -22,5 +22,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src", "test", "migrations", "mikro-orm.config.ts"]
+  "include": ["src", "test", "scripts", "migrations", "mikro-orm.config.ts"]
 }

@@ -2,6 +2,7 @@ import { applyWagerTransaction } from '../domain/apply-wager-transaction.ts';
 import { DomainError, ValidationError } from '../domain/errors.ts';
 import type { EventContext, IntegrationEvent } from '../domain/events/integration-event.ts';
 import {
+  WagerTransactionFailed,
   WagerTransactionPendingReference,
   WagerTransactionProcessed,
   WagerTransactionRejected,
@@ -165,6 +166,63 @@ export class ProcessWagerTransaction {
       }
       throw error;
     }
+  }
+
+  /**
+   * Registra que a operação falhou de forma PERMANENTE por infraestrutura:
+   * as tentativas de processá-la se esgotaram. Grava a transação como FAILED
+   * (terminal e auditável) e publica WagerTransactionFailed.
+   *
+   * Não trava a wallet — não há efeito financeiro, e é justamente quando o
+   * lock da wallet está inalcançável que este caminho é usado. Se a operação
+   * já tiver um desfecho gravado, ele é preservado e devolvido.
+   */
+  async recordFailure(command: ProcessWagerTransactionCommand): Promise<WagerTransactionResult> {
+    const candidate = this.buildCandidate(command);
+    const source: TransactionSource = command.inbox === undefined ? 'http' : 'queue';
+
+    const outcome = await this.unitOfWork.run(async (context) => {
+      const existing =
+        (await context.transactions.findByIdempotencyKey(command.idempotencyKey)) ??
+        (await context.transactions.findByExternalId(
+          command.providerId,
+          command.externalTransactionId,
+        ));
+      if (existing !== undefined) return { result: toResult(existing, true), recorded: false };
+
+      if (command.inbox !== undefined) await this.registerInInbox(context, command.inbox);
+      const now = this.clock.now();
+      const transaction = candidate.create();
+      transaction.fail(FailureCode.InternalError, now);
+      await context.transactions.insert(transaction);
+      await context.outbox.enqueue([
+        WagerTransactionFailed.from(transaction, {
+          eventId: this.ids.next(),
+          correlationId: command.correlationId,
+          causationId: command.causationId,
+          occurredAt: now,
+        }),
+      ]);
+      return { result: toResult(transaction, false), recorded: true };
+    });
+
+    if (outcome.recorded) {
+      this.metrics.transactionResolved({
+        kind: candidate.kind,
+        status: outcome.result.status,
+        failureCode: outcome.result.failureCode,
+        source,
+      });
+      this.logger.error('wager transaction failed permanently', {
+        correlationId: command.correlationId,
+        messageId: command.inbox?.messageId,
+        providerId: command.providerId,
+        walletId: command.walletId,
+        transactionId: outcome.result.transactionId,
+        source,
+      });
+    }
+    return outcome.result;
   }
 
   private async runWithRetry(

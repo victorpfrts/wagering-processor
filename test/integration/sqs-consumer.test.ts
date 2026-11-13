@@ -390,7 +390,69 @@ describe('falhas transitórias → retry com backoff → DLQ pelo limite', () =>
     expect(await expectLedgerConsistent(h, walletId)).toMatchObject({ balance: '75.00', debits: 1 });
   });
 
-  test(`falha que persiste: após ${MAX_RECEIVE_COUNT} recebimentos o SQS move para a DLQ`, async () => {
+  test(`tentativas esgotadas (${MAX_RECEIVE_COUNT}): transação gravada como FAILED, mensagem na DLQ, replay devolve FAILED`, async () => {
+    const queues = await newQueues();
+    const walletId = await newWallet(h, '100.00');
+    const message = wagerMessage(walletId);
+    // a wallet fica travada durante o teste inteiro: toda tentativa estoura o lock
+    const { promise: release, resolve } = Promise.withResolvers<void>();
+    const holder = h.db.sql.begin(async (tx) => {
+      await tx`select 1 from wallets where id = ${walletId} for update`;
+      await release;
+    });
+    const impatient = h.processWith({ lockTimeoutMs: 100 });
+    const { outcomes } = startConsumer(queues, {
+      handler: new WagerMessageHandler(impatient, silentLogger, MAX_RECEIVE_COUNT),
+    });
+
+    try {
+      await send(queues, message, walletId);
+      await until(() => outcomes.includes('dead_lettered'), 30_000);
+    } finally {
+      resolve();
+      await holder;
+    }
+
+    expect(outcomes).toEqual(['retried', 'retried', 'dead_lettered']);
+    expect(await readDlq(queues.dlq)).toMatchObject([{ reason: 'RETRIES_EXHAUSTED' }]);
+    expect(await queueDepth(queues.main)).toBe(0);
+
+    // auditável no banco: FAILED, com código, sem efeito financeiro
+    expect(await transactionRows(h, walletId)).toMatchObject([
+      { status: 'FAILED', failure_code: 'INTERNAL_ERROR', resulting_balance: null },
+    ]);
+    expect(await snapshot(h, walletId)).toMatchObject({ balance: '100.00', version: 1, debits: 0 });
+    expect(await inboxCount(message.messageId)).toBe(1);
+    const [event] = await h.db.sql`
+      select event_type, payload from outbox_messages where partition_key = ${walletId}`;
+    expect(event.event_type).toBe('WagerTransactionFailed');
+    expect(event.payload.data).toMatchObject({ failureCode: 'INTERNAL_ERROR' });
+
+    // FAILED é terminal: reenviar a mesma operação devolve o mesmo desfecho
+    const replay = await h.process.execute({
+      ...message.data,
+      correlationId: 'replay',
+    });
+    expect(replay).toMatchObject({
+      status: 'FAILED',
+      failureCode: 'INTERNAL_ERROR',
+      idempotentReplay: true,
+    });
+    expect(await snapshot(h, walletId)).toMatchObject({ balance: '100.00', debits: 0 });
+  }, 40_000);
+
+  test('se a operação termina enquanto se desiste dela, o desfecho real é preservado', async () => {
+    const walletId = await newWallet(h, '100.00');
+    const message = wagerMessage(walletId);
+    const processed = await h.process.execute({ ...message.data, correlationId: 'c' });
+
+    const result = await h.process.recordFailure({ ...message.data, correlationId: 'c' });
+
+    expect(result).toEqual({ ...processed, idempotentReplay: true });
+    expect(await transactionRows(h, walletId)).toMatchObject([{ status: 'PROCESSED' }]);
+  });
+
+  test(`nem o registro da falha é possível: após ${MAX_RECEIVE_COUNT} recebimentos o próprio SQS move para a DLQ (redrive)`, async () => {
     const queues = await newQueues();
     const walletId = await newWallet(h, '100.00');
     const message = wagerMessage(walletId);

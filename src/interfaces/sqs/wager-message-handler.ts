@@ -45,8 +45,13 @@ export type HandlingDecision =
   | { action: 'retry'; reason: string }
   | { action: 'dead-letter'; reason: string };
 
+export interface MessageMeta {
+  /** Quantas vezes o broker já entregou esta mensagem (1 na primeira). */
+  receiveCount: number;
+}
+
 export interface MessageHandler {
-  handle(body: string): Promise<HandlingDecision>;
+  handle(body: string, meta: MessageMeta): Promise<HandlingDecision>;
 }
 
 /**
@@ -58,9 +63,11 @@ export class WagerMessageHandler implements MessageHandler {
   constructor(
     private readonly processWagerTransaction: ProcessWagerTransaction,
     private readonly logger: AppLogger,
+    /** Depois de tantas entregas com falha transitória, a operação é dada como FAILED. */
+    private readonly maxReceiveCount = 5,
   ) {}
 
-  async handle(body: string): Promise<HandlingDecision> {
+  async handle(body: string, meta: MessageMeta = { receiveCount: 1 }): Promise<HandlingDecision> {
     let json: unknown;
     try {
       json = JSON.parse(body);
@@ -79,29 +86,53 @@ export class WagerMessageHandler implements MessageHandler {
       walletId: data.walletId,
     };
 
+    const command = {
+      ...data,
+      correlationId: messageId,
+      causationId: messageId,
+      inbox: {
+        consumerName: WAGER_CONSUMER_NAME,
+        messageId,
+        // Conteúdo de negócio da mensagem; occurredAt é metadado de transporte.
+        payloadHash: createHash('sha256').update(canonicalJson({ type, data })).digest('hex'),
+      },
+    };
+
     try {
-      const result = await this.processWagerTransaction.execute({
-        ...data,
-        correlationId: messageId,
-        causationId: messageId,
-        inbox: {
-          consumerName: WAGER_CONSUMER_NAME,
-          messageId,
-          // Conteúdo de negócio da mensagem; occurredAt é metadado de transporte.
-          payloadHash: createHash('sha256').update(canonicalJson({ type, data })).digest('hex'),
-        },
-      });
+      const result = await this.processWagerTransaction.execute(command);
       // REJECTED e PENDING_REFERENCE também são desfechos confirmados: ack.
       // (O log do desfecho é feito pelo próprio use case.)
       return { action: 'ack', detail: result.status };
     } catch (error) {
-      const decision = classifyFailure(error);
+      let decision = classifyFailure(error);
+      if (decision.action === 'retry' && meta.receiveCount >= this.maxReceiveCount) {
+        decision = await this.giveUp(command, decision);
+      }
       this.logger[decision.action === 'retry' ? 'warn' : 'error']('wager message failed', {
         ...trace,
         action: decision.action,
         reason: decision.reason,
+        receiveCount: meta.receiveCount,
       });
       return decision;
+    }
+  }
+
+  /**
+   * Tentativas esgotadas: grava a transação como FAILED (terminal, auditável)
+   * e manda a mensagem para a DLQ. Se nem isso for possível — o banco está
+   * fora —, devolve à fila: o limite de recebimentos do próprio SQS (redrive)
+   * a levará para a DLQ.
+   */
+  private async giveUp(
+    command: Parameters<ProcessWagerTransaction['recordFailure']>[0],
+    fallback: Exclude<HandlingDecision, { action: 'ack' }>,
+  ): Promise<Exclude<HandlingDecision, { action: 'ack' }>> {
+    try {
+      await this.processWagerTransaction.recordFailure(command);
+      return { action: 'dead-letter', reason: 'RETRIES_EXHAUSTED' };
+    } catch {
+      return fallback;
     }
   }
 }

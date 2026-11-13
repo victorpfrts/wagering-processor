@@ -101,6 +101,22 @@ const submit = (instance: Instance, body: Json) =>
     'Idempotency-Key': `${body['providerId']}:${body['externalTransactionId']}`,
   });
 
+/**
+ * Como um provedor de verdade: erro de rede não diz se a operação foi
+ * aplicada, então ele reenvia a MESMA requisição. (Depois de um kill -9, o
+ * cliente HTTP pode tentar reaproveitar uma conexão que morreu com o processo.)
+ */
+async function submitUntilAnswered(instance: Instance, body: Json, attempts = 5) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await submit(instance, body);
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      await Bun.sleep(50 * attempt);
+    }
+  }
+}
+
 async function sendToQueue(body: Json, messageId = `msg-${uuid()}`): Promise<void> {
   await sqs.send(
     new SendMessageCommand({
@@ -378,7 +394,7 @@ describe('reinício do serviço', () => {
     // reinício: o provedor reenvia TUDO com as mesmas chaves
     instances = await start(3);
     const secondPass = await Promise.all(
-      httpBets.map((body, i) => submit(instances[(i + 1) % 3] as Instance, body)),
+      httpBets.map((body, i) => submitUntilAnswered(instances[(i + 1) % 3] as Instance, body)),
     );
     expect(secondPass.every((r) => r.status === 200)).toBe(true);
     await until(async () => (await queueDepth(queues.main)) === 0, 60_000);

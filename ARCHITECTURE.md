@@ -54,7 +54,7 @@ interfaces  →  application  →  domain
 
 `app.module.ts` é o único lugar que liga porta a adaptador.
 
-**Modelagem do domínio.** Classes com construtor privado e factories (`create`, `open`, `rehydrate`). `rehydrate` só reconstrói estado; não revalida transições. `WalletLedgerEntry` não tem campo mutável nem método de transição. As regras de `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK` ficam numa função pura (`applyWagerTransaction`) que recebe a wallet já carregada: 121 testes de unidade rodam em cerca de 50 ms, sem banco.
+**Modelagem do domínio.** Classes com construtor privado e factories (`create`, `open`, `rehydrate`). `rehydrate` só reconstrói estado; não revalida transições. `WalletLedgerEntry` não tem campo mutável nem método de transição. As regras de `BET`, `WIN`, `LOSS`, `REFUND` e `ROLLBACK` ficam numa função pura (`applyWagerTransaction`) que recebe a wallet já carregada: 122 testes de unidade rodam em cerca de 50 ms, sem banco.
 
 **Por que não deixar as regras no serviço Nest?** Porque só seriam testáveis com banco. O custo é uma camada a mais; o ganho é que o caso de uso cuida apenas de lock, transação e persistência.
 
@@ -100,7 +100,7 @@ O lock vem antes da consulta de idempotência de propósito: dali em diante toda
 ### Transições de estado
 
 ```
-PENDING ───────────────► PROCESSED | REJECTED
+PENDING ───────────────► PROCESSED | REJECTED | FAILED
 PENDING ───────────────► PENDING_REFERENCE
 PENDING_REFERENCE ─────► PENDING_REFERENCE   (nova tentativa agendada)
 PENDING_REFERENCE ─────► PROCESSED | REJECTED
@@ -108,7 +108,7 @@ PENDING_REFERENCE ─────► PROCESSED | REJECTED
 
 `PROCESSED`, `REJECTED` e `FAILED` são terminais. Tentar transicionar a partir deles lança erro no domínio e é recusado por trigger no banco.
 
-`FAILED` existe no modelo e no schema, mas **nenhum fluxo atual o grava**: falha de infraestrutura desfaz a transação inteira e a operação é repetida; uma mensagem que esgota as tentativas vai para a DLQ sem deixar linha de transação. Ver limitações.
+`FAILED` é o desfecho de uma **falha permanente de infraestrutura**: a operação chegou pela fila, falhou de forma transitória em todas as entregas permitidas (5) e foi dada como perdida. O handler grava a transação como `FAILED` com `INTERNAL_ERROR`, publica `WagerTransactionFailed` e manda a mensagem para a DLQ. Esse registro não trava a wallet, porque não há efeito financeiro e é justamente quando o lock está inalcançável que ele é usado. Se nem o registro for possível (banco fora do ar), a mensagem volta à fila e o redrive do próprio SQS a leva para a DLQ; ver limitações.
 
 ## 6. Decisões
 
@@ -189,7 +189,7 @@ Trade-offs assumidos:
 - Um evento que nunca consegue sair segura os seguintes **da mesma wallet**. Não há DLQ para eventos de saída; a métrica de atraso da outbox é o que denuncia o caso.
 - **Descartado:** publicar em memória logo após o commit (perde o evento se o processo morre); CDC lendo o WAL (robusto, mas infraestrutura pesada para o escopo); lock consultivo por wallet (testado: um publisher segurava todas as wallets e o outro ficava ocioso).
 
-Eventos publicados: `WagerTransactionProcessed` (toda transação aplicada, inclusive `LOSS` e a `OPENING`), `WagerTransactionRejected`, `WalletBalanceChanged` (somente quando o saldo muda) e `WagerTransactionPendingReference` (uma vez, na entrada no estado). Cada evento é uma subclasse de `IntegrationEvent` com `eventType` e `version` no tipo; `data` carrega `MoneyProps`, nunca `Money`.
+Eventos publicados: `WagerTransactionProcessed` (toda transação aplicada, inclusive `LOSS` e a `OPENING`), `WagerTransactionRejected`, `WalletBalanceChanged` (somente quando o saldo muda), `WagerTransactionPendingReference` (uma vez, na entrada no estado) e `WagerTransactionFailed` (além dos mínimos pedidos, para a falha permanente). Cada evento é uma subclasse de `IntegrationEvent` com `eventType` e `version` no tipo; `data` carrega `MoneyProps`, nunca `Money`.
 
 ### 6.6 Consumo da fila e inbox
 
@@ -203,12 +203,13 @@ O handler traduz a mensagem para o mesmo caso de uso do HTTP e devolve uma **dec
 | Mesmo `messageId` com conteúdo diferente | permanente | DLQ direto |
 | Mesma idempotency key com payload diferente | permanente | DLQ direto |
 | Lock disputado, banco fora, erro inesperado | transitório | volta à fila com backoff |
+| Falha transitória na 5ª entrega | permanente por esgotamento | grava `FAILED`, DLQ |
 
 - **Inbox na mesma transação.** A chave é `(consumerName, messageId)`. Se a transação é desfeita, o registro some junto e a mensagem volta a ser "nunca vista".
 - **Ack só depois do commit.**
 - **Conflito de idempotência vai para a DLQ**, e não para um ack silencioso: na fila não há resposta ao provedor, e descartar perderia a informação.
 - **Erro desconhecido é transitório.** Na dúvida, não se perde a mensagem; se persistir, o limite leva à DLQ.
-- **Limite:** `maxReceiveCount = 5` na fila (redrive do SQS), com visibilidade de 2 s dobrando até 60 s.
+- **Limite:** 5 entregas, com visibilidade de 2 s dobrando até 60 s. Na 5ª falha transitória a aplicação grava a transação como `FAILED` e envia a mensagem à DLQ; o `maxReceiveCount = 5` da fila (redrive do SQS) é a rede de segurança para quando nem isso é possível.
 - **Ordem é otimização.** Uma mensagem em retry não segura as seguintes da mesma wallet; o sistema já tolera chegada fora de ordem.
 - **`SIGTERM`:** interrompe o long polling, termina as mensagens em andamento e devolve as recebidas e não iniciadas com visibilidade 0.
 
@@ -229,7 +230,7 @@ Reversão que deixaria o saldo negativo é rejeitada com `REVERSAL_WOULD_OVERDRA
 
 ### 6.9 Status HTTP e códigos de falha
 
-O mapeamento distingue as cinco situações pedidas, de forma igual em todos os endpoints: 400 (payload inválido), 409 (conflito de idempotência), 422 (rejeição de negócio, com `failureCode`), 202 (aceite pendente) e 503 com `Retry-After` (falha transitória). A tabela completa está no [`README.md`](README.md#status-http) e a taxonomia de `failureCode`, com o que o provedor deve fazer em cada caso, em [`docs/regras.md`](docs/regras.md#códigos-de-falha).
+O mapeamento distingue as cinco situações pedidas, de forma igual em todos os endpoints: 400 (payload inválido), 409 (conflito de idempotência), 422 (rejeição de negócio, com `failureCode`), 202 (aceite pendente) e 503 com `Retry-After` (falha transitória). O replay de uma transação `FAILED` devolve 500 com o desfecho gravado. A tabela completa está no [`README.md`](README.md#status-http) e a taxonomia de `failureCode`, com o que o provedor deve fazer em cada caso, em [`docs/regras.md`](docs/regras.md#códigos-de-falha).
 
 Rejeição de negócio e aceite pendente **não são erros**: são desfechos da transação, gravados e idempotentes. Por isso saem do controller, e não do filtro de exceções.
 
@@ -267,8 +268,8 @@ Nenhum controller mudaria. Mensagens da fila continuam tratadas como canal inter
 
 | Nível | O que prova | Como |
 |---|---|---|
-| Unidade (121) | regras de negócio | domínio puro, sem I/O |
-| Integração (136) | schema, atomicidade, HTTP, outbox, fila | PostgreSQL e LocalStack reais |
+| Unidade (122) | regras de negócio | domínio puro, sem I/O |
+| Integração (139) | schema, atomicidade, HTTP, outbox, fila | PostgreSQL e LocalStack reais |
 | Concorrência (18) | corridas e quedas | conexões paralelas e **processos reais** |
 
 - **Sem mocks de infraestrutura.** Onde é preciso provocar uma falha, ela é injetada em volta do componente real (um publisher que falha para um evento específico, um cliente SQS que descarta o primeiro ack).
@@ -297,7 +298,8 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 **Modelo**
 
 - A **rodada não é um agregado**. Não impedimos um `WIN` depois de a `BET` da rodada ter sido revertida, nem duas `BET` na mesma rodada.
-- **`FAILED` não é gravado por nenhum fluxo.** Uma mensagem que esgota as tentativas vai para a DLQ sem deixar transação; a auditoria desse caso está na fila, não no banco.
+- **`FAILED` depende de o banco responder.** Se o banco está fora do ar durante todas as entregas, a mensagem vai para a DLQ pelo redrive do SQS sem deixar transação; a auditoria desse caso fica só na fila. `FAILED` também só nasce da fila: no HTTP, falha transitória devolve 503 e quem decide desistir é o provedor.
+- **`FAILED` é terminal.** A idempotency key fica ocupada; para tentar de novo o provedor precisa de uma nova operação (novo `externalTransactionId`).
 - O `correlationId` da requisição original **não é guardado na transação**. Os eventos de uma resolução tardia usam o id da transação como correlação.
 - Reversão parcial está fora de escopo, como o enunciado define. Não há conversão entre moedas.
 
@@ -318,7 +320,7 @@ Os testes encontraram defeitos reais durante o desenvolvimento, entre eles a cor
 ## 12. Com mais tempo
 
 1. Modelar a rodada como agregado, com estado próprio.
-2. Gravar `FAILED` para mensagens que vão à DLQ por esgotamento, fechando a auditoria no banco.
+2. Reprocessamento assistido da DLQ (redrive manual com auditoria).
 3. Persistir o `correlationId` na transação.
 4. Retenção e particionamento para inbox, outbox e ledger.
 5. Substituir o polling da outbox por `LISTEN/NOTIFY` como gatilho, mantendo o polling como rede de segurança.

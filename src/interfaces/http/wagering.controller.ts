@@ -22,6 +22,9 @@ export function statusFor(result: WagerTransactionResult): number {
       return HttpStatus.OK;
     case WagerTransactionStatus.Rejected:
       return HttpStatus.UNPROCESSABLE_ENTITY;
+    case WagerTransactionStatus.Failed:
+      // Terminal: a operação não foi aplicada e reenviar com esta chave não muda isso.
+      return HttpStatus.INTERNAL_SERVER_ERROR;
     default:
       // PENDING_REFERENCE: aceita, ainda não aplicada.
       return HttpStatus.ACCEPTED;

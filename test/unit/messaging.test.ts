@@ -3,6 +3,7 @@ import { applyWagerTransaction } from '../../src/domain/apply-wager-transaction.
 import { exponentialBackoffMs } from '../../src/domain/backoff.ts';
 import { InvalidTransactionStateError, ValidationError } from '../../src/domain/errors.ts';
 import {
+  WagerTransactionFailed,
   WagerTransactionPendingReference,
   WagerTransactionProcessed,
   WagerTransactionRejected,
@@ -80,6 +81,17 @@ describe('eventos de integração', () => {
     expect(event.partitionKey).toBe(WALLET_ID);
     expect(event.toJSON().data.referenceExternalTransactionId).toBe('b-1');
     expect(event.toJSON().data.nextAttemptAt).toBe('2026-07-29T15:00:02.000Z');
+  });
+
+  test('WagerTransactionFailed só nasce de uma transação FAILED', () => {
+    const failed = makeTransaction();
+    failed.fail(FailureCode.InternalError, NOW);
+    const json = WagerTransactionFailed.from(failed, ctx).toJSON();
+    expect(json.eventType).toBe('WagerTransactionFailed');
+    expect(json.data).toMatchObject({ failureCode: 'INTERNAL_ERROR', failedAt: NOW.toISOString() });
+    expect(() => WagerTransactionFailed.from(runBet('25.00').transaction, ctx)).toThrow(
+      ValidationError,
+    );
   });
 
   test('data do evento é congelada', () => {

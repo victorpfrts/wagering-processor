@@ -25,6 +25,8 @@ export interface AppConfig {
     maxMessages: number;
     retryBaseSeconds: number;
     retryMaxSeconds: number;
+    /** Entregas com falha transitória antes de dar a operação como FAILED. */
+    maxReceiveCount: number;
   };
   sqs: {
     endpoint: string;
@@ -84,6 +86,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       maxMessages: integer(env, 'CONSUMER_MAX_MESSAGES', 10),
       retryBaseSeconds: integer(env, 'CONSUMER_RETRY_BASE_SECONDS', 2),
       retryMaxSeconds: integer(env, 'CONSUMER_RETRY_MAX_SECONDS', 60),
+      maxReceiveCount: integer(env, 'CONSUMER_MAX_RECEIVE_COUNT', 5),
     },
     sqs: {
       endpoint: text(env, 'SQS_ENDPOINT', 'http://localhost:4566'),

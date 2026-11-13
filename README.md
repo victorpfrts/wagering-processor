@@ -46,9 +46,9 @@ Os testes de integração e de concorrência usam **PostgreSQL e SQS reais** (os
 
 ```sh
 bun run infra:up           # uma vez
-bun test                   # tudo: 275 testes, cerca de 35 s
-bun run test:unit          # domínio puro, sem infraestrutura (121 testes)
-bun run test:integration   # schema, use cases, HTTP, outbox, fila, observabilidade (136 testes)
+bun test                   # tudo: 279 testes, cerca de 40 s
+bun run test:unit          # domínio puro, sem infraestrutura (122 testes)
+bun run test:integration   # schema, use cases, HTTP, outbox, fila, observabilidade (139 testes)
 bun run test:concurrency   # corridas reais, 3 processos, kill -9, reinício (18 testes)
 bun run typecheck
 ```
@@ -115,6 +115,7 @@ curl -s -X POST localhost:3000/wagering/transactions \
 | Conflito de idempotência, ou wallet duplicada | 409 | não reenviar com a mesma chave |
 | Rejeitada por regra de negócio (`failureCode` no corpo) | 422 | decidir pelo `failureCode` |
 | Falha transitória (`Retry-After`) | 503 | reenviar a mesma requisição |
+| Replay de transação `FAILED` (falha permanente, terminal) | 500 | abrir uma nova operação |
 
 Erros têm sempre o corpo `{ "code", "message", "details"? }`. A lista de `failureCode` está em [`docs/regras.md`](docs/regras.md#códigos-de-falha).
 
@@ -150,6 +151,7 @@ Variáveis de ambiente, todas com valor padrão (ver [`.env.example`](.env.examp
 | `SQS_TRANSACTIONS_QUEUE`, `SQS_DLQ_QUEUE`, `SQS_EVENTS_QUEUE` | nomes acima | Filas |
 | `CONSUMER_ENABLED` | `true` | Liga o consumidor da fila |
 | `CONSUMER_RETRY_BASE_SECONDS` / `_MAX_SECONDS` | `2` / `60` | Backoff do retry de mensagens |
+| `CONSUMER_MAX_RECEIVE_COUNT` | `5` | Entregas com falha antes de gravar `FAILED` e enviar à DLQ |
 | `OUTBOX_ENABLED` | `true` | Liga o publisher de eventos |
 | `OUTBOX_POLL_INTERVAL_MS`, `OUTBOX_BATCH_SIZE` | `500`, `100` | Ritmo do publisher |
 | `PENDING_REFERENCE_ENABLED` | `true` | Liga o worker de referências fora de ordem |
