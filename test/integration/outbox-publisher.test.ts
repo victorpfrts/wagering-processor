@@ -1,10 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { SQSClient } from '@aws-sdk/client-sqs';
-import type { Clock, EventPublisher } from '../../src/application/ports.ts';
+import { type Clock, type EventPublisher, NOOP_METRICS } from '../../src/application/ports.ts';
 import { PublishOutbox } from '../../src/application/publish-outbox.ts';
 import type { OutboxMessage } from '../../src/domain/outbox-message.ts';
 import { MikroOrmUnitOfWork } from '../../src/infrastructure/db/mikro-orm-unit-of-work.ts';
-import { NoopMetrics } from '../../src/infrastructure/observability.ts';
 import { SqsEventPublisher } from '../../src/infrastructure/sqs/sqs-event-publisher.ts';
 import { brlProps, command, createHarness, type Harness, newWallet } from '../support/harness.ts';
 import { createSqsClient, createTestQueue, type TestQueue } from '../support/sqs.ts';
@@ -51,7 +50,7 @@ function outboxPublisher(publisher: EventPublisher, options: { clock?: Clock; ba
     publisher,
     options.clock ?? { now: () => new Date() },
     silentLogger,
-    new NoopMetrics(),
+    NOOP_METRICS,
     options.batchSize ?? 100,
   );
 }
@@ -268,7 +267,7 @@ describe('falhas de publicação', () => {
       real,
       { now: () => new Date() },
       silentLogger,
-      new NoopMetrics(),
+      NOOP_METRICS,
       100,
     );
     await expect(crashed.execute()).rejects.toThrow('process killed before commit');

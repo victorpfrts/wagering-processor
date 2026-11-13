@@ -61,6 +61,22 @@ export class MikroOrmReadModel implements WageringReadModel {
       return records.map((record) => ({ id: record.id, walletId: record.walletId }));
     });
 
+  outboxLag: WageringReadModel['outboxLag'] = () =>
+    this.read(async (em) => {
+      // Só percorre o índice parcial dos pendentes.
+      const rows = await em.execute<{ pending: string; oldest_seconds: string | null }[]>(
+        `select count(*)::text as pending,
+                extract(epoch from now() - min(occurred_at))::text as oldest_seconds
+           from outbox_messages
+          where published_at is null`,
+      );
+      const row = rows[0];
+      return {
+        pendingMessages: Number.parseInt(row?.pending ?? '0', 10),
+        oldestPendingSeconds: Math.max(0, Number.parseFloat(row?.oldest_seconds ?? '0') || 0),
+      };
+    });
+
   reconciliationSnapshot: WageringReadModel['reconciliationSnapshot'] = (walletId) =>
     this.read(async (em) => {
       // Um único comando = um único snapshot: saldo e soma são da mesma foto

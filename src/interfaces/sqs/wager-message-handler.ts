@@ -92,13 +92,7 @@ export class WagerMessageHandler implements MessageHandler {
         },
       });
       // REJECTED e PENDING_REFERENCE também são desfechos confirmados: ack.
-      this.logger.info('wager message handled', {
-        ...trace,
-        transactionId: result.transactionId,
-        status: result.status,
-        failureCode: result.failureCode,
-        idempotentReplay: result.idempotentReplay,
-      });
+      // (O log do desfecho é feito pelo próprio use case.)
       return { action: 'ack', detail: result.status };
     } catch (error) {
       const decision = classifyFailure(error);

@@ -162,5 +162,32 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 - Falha ao avisar o broker (ack, visibilidade) é só logada: a mensagem reaparece e o inbox absorve.
 - Eventos de saída em `wager-events.fifo`, grupo = `walletId`, deduplicação = `eventId`.
 
+## Observabilidade
+**Logs** (pino, uma linha JSON por evento; `LOG_LEVEL`, padrão `info`):
+- Todo processamento de transação gera uma linha com `correlationId`, `transactionId`, `walletId`, `providerId`, `messageId` (quando vem da fila), `source`, `kind`, `status`, `failureCode` e `idempotentReplay`.
+- O log sai do use case, então é igual para HTTP e fila.
+- `correlationId`: no HTTP vem do header `X-Correlation-Id` (ou é gerado) e volta na resposta; na fila é o `messageId`.
+- Nunca entram valor, saldo, corpo de requisição ou de mensagem. Como segunda barreira, o logger mascara as chaves `money`, `amount`, `balance`, `payload`, `body` e `authorization`.
+- Log de acesso HTTP: método, padrão da rota, status e duração. Health e `/metrics` não geram log de acesso.
+- Os logs internos do NestJS saem no mesmo formato.
+
+**Métricas** (`GET /metrics`, formato Prometheus, sem autenticação):
+
+| Exigência do desafio | Métrica |
+|---|---|
+| Transações por status | `wagering_transactions_total{kind,status,failure_code,source}` |
+| Duplicatas detectadas | `wagering_duplicates_total{type}` (`idempotent_replay`, `idempotency_conflict`, `inbox_redelivery`) |
+| Retries | `wagering_messages_total{outcome="retried"}`, `wagering_pending_reference_retries_total{status}`, `wagering_outbox_publish_total{result="failed"}` |
+| Mensagens em DLQ | `wagering_messages_total{outcome="dead_lettered"}` e `wagering_dlq_messages` (profundidade atual) |
+| Conflitos de lock | `wagering_concurrency_conflicts_total{reason}` (`LOCK_TIMEOUT`, `DEADLOCK`, `DUPLICATE_KEY`) |
+| Outbox lag | `wagering_outbox_lag_seconds` (idade do evento pendente mais antigo) e `wagering_outbox_pending_messages` |
+| Latência de processamento | `wagering_processing_duration_seconds{source,outcome}` e `wagering_http_request_duration_seconds{method,route,status}` |
+| Reconciliação | `wagering_reconciliation_divergences_total` |
+
+- Contadores só são incrementados depois do commit ou do erro definitivo, nunca dentro de transação que ainda pode ser desfeita.
+- Outbox lag e profundidade da DLQ são lidos na hora da coleta, com limite de 2s; se a leitura falhar, o `/metrics` responde sem eles.
+- Rótulos de rota usam o padrão (`/wallets/:walletId`), nunca ids.
+- Cada instância expõe as próprias métricas; a soma é feita no Prometheus.
+
 ## Autenticação
 Não implementada (não pontua). Ponto de extensão: `AuthGuard` no-op + `ProviderIdentityPort`. Desenho com Keycloak (client credentials por provedor) no `ARCHITECTURE.md`.

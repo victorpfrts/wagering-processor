@@ -6,8 +6,7 @@ import {
   SendMessageCommand,
   type SQSClient,
 } from '@aws-sdk/client-sqs';
-import type { MessageOutcome } from '../../src/application/ports.ts';
-import { NoopMetrics } from '../../src/infrastructure/observability.ts';
+import { type MessageOutcome, NOOP_METRICS } from '../../src/application/ports.ts';
 import { SqsConsumer } from '../../src/infrastructure/sqs/sqs-consumer.ts';
 import {
   type MessageHandler,
@@ -105,16 +104,7 @@ function startConsumer(
   return { consumer, outcomes };
 }
 
-const noopMetrics = (() => {
-  const base = new NoopMetrics();
-  return {
-    reconciliationDivergence: () => base.reconciliationDivergence(),
-    outboxPublished: () => base.outboxPublished(),
-    outboxPublishFailed: () => base.outboxPublishFailed(),
-    messageHandled: () => base.messageHandled(),
-    pendingReferenceRetried: () => base.pendingReferenceRetried(),
-  };
-})();
+const noopMetrics = NOOP_METRICS;
 
 function wagerMessage(walletId: string, overrides: Record<string, unknown> = {}, messageId = `msg-${uuid()}`) {
   const externalTransactionId = `ext-${uuid()}`;

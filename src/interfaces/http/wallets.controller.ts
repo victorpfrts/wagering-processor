@@ -20,9 +20,9 @@ export class WalletsController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const body = parseOrThrow(openWalletSchema, rawBody, 'request body');
+    // preenchido pelo middleware requestContext; o fallback cobre uso direto do controller
     const correlationId = correlationIdHeader ?? Bun.randomUUIDv7();
     const wallet = await this.openWallet.execute({ ...body, correlationId });
-    response.setHeader('X-Correlation-Id', correlationId);
     response.setHeader('Location', `/wallets/${wallet.id}`);
     return presentWallet(wallet);
   }

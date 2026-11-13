@@ -74,6 +74,7 @@ export class WageringController {
       'Idempotency-Key header',
     );
     const body = parseOrThrow(submitTransactionSchema, rawBody, 'request body');
+    // preenchido pelo middleware requestContext; o fallback cobre uso direto do controller
     const correlationId = correlationIdHeader ?? Bun.randomUUIDv7();
 
     const result = await this.processWagerTransaction.execute({
@@ -82,7 +83,6 @@ export class WageringController {
       correlationId,
     });
 
-    response.setHeader('X-Correlation-Id', correlationId);
     response.status(statusFor(result));
     return presentResult(result);
   }

@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { NOOP_METRICS } from '../../src/application/ports.ts';
 import type { ProcessWagerTransaction } from '../../src/application/process-wager-transaction.ts';
 import { RetryPendingReferences } from '../../src/application/retry-pending-references.ts';
 import { REFERENCE_RETRY_POLICY } from '../../src/domain/backoff.ts';
 import { MikroOrmReadModel } from '../../src/infrastructure/db/mikro-orm-read-model.ts';
 import { MikroOrmUnitOfWork } from '../../src/infrastructure/db/mikro-orm-unit-of-work.ts';
-import { NoopMetrics } from '../../src/infrastructure/observability.ts';
 import {
   brlProps,
   command,
@@ -40,7 +40,7 @@ function worker(): RetryPendingReferences {
     process,
     clock,
     silentLogger,
-    new NoopMetrics(),
+    NOOP_METRICS,
     100,
   );
 }
@@ -258,7 +258,7 @@ describe('várias instâncias do worker', () => {
       process,
       clock,
       silentLogger,
-      new NoopMetrics(),
+      NOOP_METRICS,
       100,
     );
     try {

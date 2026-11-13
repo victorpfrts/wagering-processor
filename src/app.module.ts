@@ -1,4 +1,4 @@
-import { SQSClient } from '@aws-sdk/client-sqs';
+import { GetQueueAttributesCommand, GetQueueUrlCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { MikroOrmModule } from '@mikro-orm/nestjs';
 import { MikroORM } from '@mikro-orm/postgresql';
 import { type DynamicModule, Module } from '@nestjs/common';
@@ -28,7 +28,11 @@ import { APP_CONFIG, type AppConfig, loadConfig } from './config.ts';
 import { MikroOrmReadModel } from './infrastructure/db/mikro-orm-read-model.ts';
 import { MikroOrmUnitOfWork } from './infrastructure/db/mikro-orm-unit-of-work.ts';
 import { buildOrmConfig } from './infrastructure/db/orm-config.ts';
-import { JsonConsoleLogger, NoopMetrics } from './infrastructure/observability.ts';
+import {
+  createPino,
+  PinoAppLogger,
+} from './infrastructure/observability/pino-logger.ts';
+import { PrometheusMetrics } from './infrastructure/observability/prometheus-metrics.ts';
 import { SqsEventPublisher } from './infrastructure/sqs/sqs-event-publisher.ts';
 import { SystemClock, UuidV7Generator } from './infrastructure/system.ts';
 import { WorkersService } from './infrastructure/workers/workers.service.ts';
@@ -38,6 +42,7 @@ import {
   ProviderAuthGuard,
 } from './interfaces/http/auth.ts';
 import { HealthController } from './interfaces/http/health.controller.ts';
+import { MetricsController } from './interfaces/http/metrics.controller.ts';
 import { HttpExceptionFilter } from './interfaces/http/http-exception.filter.ts';
 import { WageringController } from './interfaces/http/wagering.controller.ts';
 import { WalletsController } from './interfaces/http/wallets.controller.ts';
@@ -57,15 +62,34 @@ export class AppModule {
           registerRequestContext: false,
         }),
       ],
-      controllers: [HealthController, WageringController, WalletsController],
+      controllers: [HealthController, MetricsController, WageringController, WalletsController],
       providers: [
         { provide: APP_CONFIG, useValue: config },
         { provide: APP_FILTER, useClass: HttpExceptionFilter },
         // Autenticação: guard global + porta no-op (ver interfaces/http/auth.ts).
         { provide: PROVIDER_IDENTITY, useClass: AnonymousProviderIdentity },
         { provide: APP_GUARD, useClass: ProviderAuthGuard },
-        { provide: APP_LOGGER, useClass: JsonConsoleLogger },
-        { provide: METRICS, useClass: NoopMetrics },
+        { provide: APP_LOGGER, useFactory: () => new PinoAppLogger(createPino(config.logLevel)) },
+        {
+          provide: METRICS,
+          inject: [READ_MODEL, SQSClient],
+          useFactory: (readModel: WageringReadModel, sqs: SQSClient) =>
+            new PrometheusMetrics({
+              outboxLag: () => readModel.outboxLag(),
+              dlqDepth: async () => {
+                const { QueueUrl } = await sqs.send(
+                  new GetQueueUrlCommand({ QueueName: config.sqs.dlqQueue }),
+                );
+                const { Attributes } = await sqs.send(
+                  new GetQueueAttributesCommand({
+                    QueueUrl,
+                    AttributeNames: ['ApproximateNumberOfMessages'],
+                  }),
+                );
+                return Number(Attributes?.['ApproximateNumberOfMessages'] ?? 0);
+              },
+            }),
+        },
         { provide: CLOCK, useClass: SystemClock },
         { provide: ID_GENERATOR, useClass: UuidV7Generator },
         {
@@ -144,9 +168,14 @@ export class AppModule {
         },
         {
           provide: ProcessWagerTransaction,
-          inject: [UNIT_OF_WORK, CLOCK, ID_GENERATOR],
-          useFactory: (unitOfWork: UnitOfWork, clock: Clock, ids: IdGenerator) =>
-            new ProcessWagerTransaction(unitOfWork, clock, ids),
+          inject: [UNIT_OF_WORK, CLOCK, ID_GENERATOR, APP_LOGGER, METRICS],
+          useFactory: (
+            unitOfWork: UnitOfWork,
+            clock: Clock,
+            ids: IdGenerator,
+            logger: AppLogger,
+            metrics: WageringMetrics,
+          ) => new ProcessWagerTransaction(unitOfWork, clock, ids, logger, metrics),
         },
       ],
     };

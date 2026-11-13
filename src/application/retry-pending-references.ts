@@ -1,4 +1,5 @@
 import { WagerTransactionStatus } from '../domain/wager-transaction.ts';
+import { TransientInfrastructureError } from './errors.ts';
 import type {
   AppLogger,
   Clock,
@@ -40,10 +41,14 @@ export class RetryPendingReferences {
 
     for (const candidate of due) {
       try {
-        const status = await this.retryOne(candidate.id, candidate.walletId);
-        if (status !== undefined) {
+        const outcome = await this.retryOne(candidate.id, candidate.walletId);
+        if (outcome !== undefined) {
+          const { status } = outcome;
           retried += 1;
           this.metrics.pendingReferenceRetried(status);
+          if (status !== WagerTransactionStatus.PendingReference) {
+            this.metrics.transactionResolved({ ...outcome, source: 'retry' });
+          }
           this.logger.info('pending reference retried', {
             transactionId: candidate.id,
             walletId: candidate.walletId,
@@ -53,6 +58,9 @@ export class RetryPendingReferences {
       } catch (error) {
         // Falha transitória (lock, banco): a transação continua vencida e a
         // próxima rodada tenta de novo. Uma falha não trava as demais.
+        if (error instanceof TransientInfrastructureError && error.reason !== 'UNAVAILABLE') {
+          this.metrics.concurrencyConflict(error.reason);
+        }
         this.logger.warn('pending reference retry failed', {
           transactionId: candidate.id,
           walletId: candidate.walletId,
@@ -66,7 +74,7 @@ export class RetryPendingReferences {
   private retryOne(
     transactionId: string,
     walletId: string,
-  ): Promise<WagerTransactionStatus | undefined> {
+  ): Promise<RetryOutcome | undefined> {
     return this.unitOfWork.run(async (context) => {
       // Mesma ordem do caminho normal: a wallet primeiro.
       const wallet = await context.wallets.lockById(walletId);
@@ -91,7 +99,17 @@ export class RetryPendingReferences {
         { correlationId: transaction.id },
         'save',
       );
-      return transaction.status;
+      return {
+        kind: transaction.kind,
+        status: transaction.status,
+        failureCode: transaction.failureCode,
+      };
     });
   }
+}
+
+interface RetryOutcome {
+  kind: string;
+  status: WagerTransactionStatus;
+  failureCode: string | undefined;
 }

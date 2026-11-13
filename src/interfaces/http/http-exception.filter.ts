@@ -4,6 +4,7 @@ import {
   type ExceptionFilter,
   HttpException,
   HttpStatus,
+  Inject,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
@@ -12,6 +13,7 @@ import {
   TransientInfrastructureError,
   WalletAlreadyExistsError,
 } from '../../application/errors.ts';
+import { APP_LOGGER, type AppLogger } from '../../application/ports.ts';
 import { InvalidMoneyError, ValidationError } from '../../domain/errors.ts';
 import { RequestValidationError } from './schemas.ts';
 
@@ -36,6 +38,8 @@ interface ErrorBody {
  */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  constructor(@Inject(APP_LOGGER) private readonly logger: AppLogger) {}
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const response = host.switchToHttp().getResponse<Response>();
     const { status, body, headers } = this.map(exception);
@@ -83,14 +87,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const code = status === HttpStatus.BAD_REQUEST ? 'VALIDATION_ERROR' : httpCode(status);
       return reply(status, code, exception.message);
     }
-    console.error(
-      JSON.stringify({
-        level: 'error',
-        msg: 'unhandled exception',
-        error: exception instanceof Error ? exception.message : String(exception),
-        stack: exception instanceof Error ? exception.stack : undefined,
-      }),
-    );
+    this.logger.error('unhandled exception', {
+      error: exception instanceof Error ? exception.message : String(exception),
+      stack: exception instanceof Error ? exception.stack : undefined,
+    });
     return reply(HttpStatus.INTERNAL_SERVER_ERROR, 'INTERNAL_ERROR', 'Internal server error');
   }
 }

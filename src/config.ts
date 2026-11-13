@@ -1,5 +1,6 @@
 export interface AppConfig {
   port: number;
+  logLevel: string;
   databaseUrl: string;
   db: {
     poolMax: number;
@@ -58,6 +59,7 @@ function flag(env: Env, name: string, fallback: boolean): boolean {
 export function loadConfig(env: Env = process.env): AppConfig {
   return {
     port: integer(env, 'PORT', 3000),
+    logLevel: text(env, 'LOG_LEVEL', 'info'),
     databaseUrl: text(env, 'DATABASE_URL', 'postgres://wagering:wagering@localhost:5433/wagering'),
     db: {
       poolMax: integer(env, 'DB_POOL_MAX', 10),

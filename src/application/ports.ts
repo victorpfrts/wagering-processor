@@ -111,6 +111,7 @@ export interface WageringReadModel {
   ): Promise<WagerTransaction | undefined>;
   /** Transações PENDING_REFERENCE cuja próxima tentativa já venceu, da mais atrasada para a menos. */
   duePendingReferences(now: Date, limit: number): Promise<{ id: string; walletId: string }[]>;
+  outboxLag(): Promise<OutboxLag>;
   /** Saldo e soma do ledger lidos no MESMO snapshot do banco. */
   reconciliationSnapshot(walletId: string): Promise<ReconciliationSnapshot | undefined>;
 }
@@ -123,8 +124,29 @@ export interface AppLogger {
   error(message: string, fields?: LogFields): void;
 }
 
-/** Contadores de negócio. A implementação (Prometheus) fica na infraestrutura. */
+export type TransactionSource = 'http' | 'queue' | 'retry';
+export type DuplicateKind = 'idempotent_replay' | 'idempotency_conflict' | 'inbox_redelivery';
+export type ConcurrencyConflict = 'LOCK_TIMEOUT' | 'DEADLOCK' | 'DUPLICATE_KEY';
+export type MessageOutcome = 'acked' | 'retried' | 'dead_lettered';
+
+/**
+ * Métricas de negócio e de operação. A implementação (Prometheus) fica na
+ * infraestrutura. Tudo aqui é contado DEPOIS do commit ou do erro definitivo,
+ * nunca dentro de uma transação que ainda pode ser desfeita.
+ */
 export interface WageringMetrics {
+  /** Transação nova que chegou a um desfecho (inclui PENDING_REFERENCE). */
+  transactionResolved(labels: {
+    kind: string;
+    status: string;
+    failureCode: string | undefined;
+    source: TransactionSource;
+  }): void;
+  duplicateDetected(kind: DuplicateKind): void;
+  /** Disputa de concorrência: lock não obtido, deadlock ou corrida por índice único. */
+  concurrencyConflict(reason: ConcurrencyConflict): void;
+  /** Tempo total do use case, do recebimento ao commit (ou ao erro). */
+  processingObserved(source: TransactionSource, outcome: string, seconds: number): void;
   reconciliationDivergence(): void;
   outboxPublished(count: number): void;
   outboxPublishFailed(count: number): void;
@@ -134,7 +156,26 @@ export interface WageringMetrics {
   pendingReferenceRetried(status: string): void;
 }
 
-export type MessageOutcome = 'acked' | 'retried' | 'dead_lettered';
+export const NOOP_METRICS: WageringMetrics = {
+  transactionResolved() {},
+  duplicateDetected() {},
+  concurrencyConflict() {},
+  processingObserved() {},
+  reconciliationDivergence() {},
+  outboxPublished() {},
+  outboxPublishFailed() {},
+  messageHandled() {},
+  pendingReferenceRetried() {},
+};
+
+export const SILENT_LOGGER: AppLogger = { info() {}, warn() {}, error() {} };
+
+/** Medidas lidas sob demanda, na hora da coleta das métricas. */
+export interface OutboxLag {
+  pendingMessages: number;
+  /** Idade, em segundos, do evento pendente mais antigo (0 se não houver). */
+  oldestPendingSeconds: number;
+}
 
 export const READ_MODEL = Symbol('WageringReadModel');
 export const APP_LOGGER = Symbol('AppLogger');

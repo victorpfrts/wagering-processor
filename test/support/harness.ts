@@ -1,6 +1,6 @@
 import { MikroORM } from '@mikro-orm/postgresql';
 import { expect } from 'bun:test';
-import type { Clock, IdGenerator } from '../../src/application/ports.ts';
+import type { AppLogger, Clock, IdGenerator } from '../../src/application/ports.ts';
 import {
   ProcessWagerTransaction,
   type ProcessWagerTransactionCommand,
@@ -19,6 +19,7 @@ export interface Harness {
     ids?: IdGenerator;
     lockTimeoutMs?: number;
     clock?: Clock;
+    logger?: AppLogger;
   }): ProcessWagerTransaction;
   close(): Promise<void>;
 }
@@ -36,6 +37,7 @@ export async function createHarness(): Promise<Harness> {
       new MikroOrmUnitOfWork(orm, { lockTimeoutMs: options.lockTimeoutMs ?? 5000 }),
       options.clock ?? new SystemClock(),
       options.ids ?? new UuidV7Generator(),
+      options.logger,
     );
   return {
     db,

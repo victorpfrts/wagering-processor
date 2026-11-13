@@ -1,5 +1,5 @@
 import { applyWagerTransaction } from '../domain/apply-wager-transaction.ts';
-import { ValidationError } from '../domain/errors.ts';
+import { DomainError, ValidationError } from '../domain/errors.ts';
 import type { EventContext, IntegrationEvent } from '../domain/events/integration-event.ts';
 import {
   WagerTransactionPendingReference,
@@ -22,8 +22,19 @@ import {
   DuplicateKeyError,
   IdempotencyConflictError,
   InboxPayloadMismatchError,
+  TransientInfrastructureError,
 } from './errors.ts';
-import type { Clock, IdGenerator, TransactionContext, UnitOfWork } from './ports.ts';
+import {
+  type AppLogger,
+  type Clock,
+  type IdGenerator,
+  NOOP_METRICS,
+  SILENT_LOGGER,
+  type TransactionContext,
+  type TransactionSource,
+  type UnitOfWork,
+  type WageringMetrics,
+} from './ports.ts';
 
 export interface ProcessWagerTransactionCommand {
   idempotencyKey: string;
@@ -88,11 +99,78 @@ export class ProcessWagerTransaction {
     private readonly unitOfWork: UnitOfWork,
     private readonly clock: Clock,
     private readonly ids: IdGenerator,
+    private readonly logger: AppLogger = SILENT_LOGGER,
+    private readonly metrics: WageringMetrics = NOOP_METRICS,
   ) {}
 
   async execute(command: ProcessWagerTransactionCommand): Promise<WagerTransactionResult> {
-    const candidate = this.buildCandidate(command);
+    const source: TransactionSource = command.inbox === undefined ? 'http' : 'queue';
+    const startedAt = performance.now();
+    // Campos de rastreio. De propósito NÃO há valor, saldo nem payload aqui.
+    const trace = {
+      correlationId: command.correlationId,
+      messageId: command.inbox?.messageId,
+      providerId: command.providerId,
+      walletId: command.walletId,
+      source,
+    };
+    const observe = (outcome: string): void =>
+      this.metrics.processingObserved(source, outcome, (performance.now() - startedAt) / 1000);
 
+    try {
+      const candidate = this.buildCandidate(command);
+      const { result, kind, inboxRedelivery } = await this.runWithRetry(candidate, command);
+
+      if (inboxRedelivery) this.metrics.duplicateDetected('inbox_redelivery');
+      if (result.idempotentReplay) {
+        this.metrics.duplicateDetected('idempotent_replay');
+      } else {
+        this.metrics.transactionResolved({
+          kind,
+          status: result.status,
+          failureCode: result.failureCode,
+          source,
+        });
+      }
+      observe(result.idempotentReplay ? 'replay' : result.status.toLowerCase());
+      this.logger.info('wager transaction handled', {
+        ...trace,
+        transactionId: result.transactionId,
+        kind,
+        status: result.status,
+        failureCode: result.failureCode,
+        idempotentReplay: result.idempotentReplay,
+      });
+      return result;
+    } catch (error) {
+      if (error instanceof IdempotencyConflictError) {
+        this.metrics.duplicateDetected('idempotency_conflict');
+        observe('conflict');
+        this.logger.warn('idempotency conflict', trace);
+      } else if (error instanceof TransientInfrastructureError) {
+        if (error.reason !== 'UNAVAILABLE') this.metrics.concurrencyConflict(error.reason);
+        observe('transient_failure');
+        this.logger.warn('transient failure; nothing was committed', {
+          ...trace,
+          reason: error.reason,
+        });
+      } else if (error instanceof DomainError || error instanceof InboxPayloadMismatchError) {
+        observe('invalid');
+      } else {
+        observe('error');
+        this.logger.error('unexpected failure; nothing was committed', {
+          ...trace,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async runWithRetry(
+    candidate: CandidateFactory,
+    command: ProcessWagerTransactionCommand,
+  ): Promise<ProcessOutcome> {
     for (let attempt = 1; ; attempt += 1) {
       try {
         return await this.unitOfWork.run((context) => this.process(context, candidate, command));
@@ -101,6 +179,7 @@ export class ProcessWagerTransaction {
         // insert (só acontece quando as duas não disputam a mesma wallet).
         // Reexecutar faz a busca encontrar o registro: replay ou conflito.
         if (error instanceof DuplicateKeyError && attempt < MAX_DUPLICATE_KEY_RETRIES) {
+          this.metrics.concurrencyConflict('DUPLICATE_KEY');
           continue;
         }
         throw error;
@@ -137,23 +216,22 @@ export class ProcessWagerTransaction {
         now: this.clock.now(),
       });
     create(); // dispara as validações do domínio antes de abrir a transação
-    return { payloadHash, create };
+    return { payloadHash, kind, create };
   }
 
   private async process(
     context: TransactionContext,
     candidate: CandidateFactory,
     command: ProcessWagerTransactionCommand,
-  ): Promise<WagerTransactionResult> {
+  ): Promise<ProcessOutcome> {
     // 1. Lock primeiro: a partir daqui ninguém mais mexe nesta wallet.
     const wallet = await context.wallets.lockById(command.walletId);
 
     // Entrada por fila: registra a mensagem no inbox, na mesma transação.
     // Redelivery (mesmo messageId, mesmo conteúdo) segue adiante e cai no
     // replay da idempotency key logo abaixo — nenhum efeito é repetido.
-    if (command.inbox !== undefined) {
-      await this.registerInInbox(context, command.inbox);
-    }
+    const inboxRedelivery =
+      command.inbox !== undefined && (await this.registerInInbox(context, command.inbox));
 
     // 2. Idempotência, já sob o lock.
     const sameKey = await context.transactions.findByIdempotencyKey(command.idempotencyKey);
@@ -177,16 +255,20 @@ export class ProcessWagerTransaction {
           'Idempotency-Key was already used with a different payload',
         );
       }
-      return toResult(sameExternalId, true);
+      return { result: toResult(sameExternalId, true), kind: candidate.kind, inboxRedelivery };
     }
 
     // 3 e 4. Regras de negócio e persistência.
     const transaction = candidate.create();
     await this.resolve(context, wallet, transaction, command, 'insert');
-    return toResult(transaction, false);
+    return { result: toResult(transaction, false), kind: candidate.kind, inboxRedelivery };
   }
 
-  private async registerInInbox(context: TransactionContext, receipt: InboxReceipt): Promise<void> {
+  /** Devolve true quando a mensagem já tinha sido recebida (redelivery). */
+  private async registerInInbox(
+    context: TransactionContext,
+    receipt: InboxReceipt,
+  ): Promise<boolean> {
     const seen = await context.inbox.find(receipt.consumerName, receipt.messageId);
     if (seen === undefined) {
       const now = this.clock.now();
@@ -195,9 +277,12 @@ export class ProcessWagerTransaction {
       // Se esta transação for desfeita, o registro some junto: a mensagem
       // volta a ser "nunca vista" e o redelivery a processa do zero.
       await context.inbox.insert(message);
-    } else if (!seen.matchesPayload(receipt.payloadHash)) {
+      return false;
+    }
+    if (!seen.matchesPayload(receipt.payloadHash)) {
       throw new InboxPayloadMismatchError();
     }
+    return true;
   }
 
   /**
@@ -282,7 +367,14 @@ export class ProcessWagerTransaction {
 
 interface CandidateFactory {
   payloadHash: string;
+  kind: WagerTransactionKind;
   create(): WagerTransaction;
+}
+
+interface ProcessOutcome {
+  result: WagerTransactionResult;
+  kind: WagerTransactionKind;
+  inboxRedelivery: boolean;
 }
 
 export function toResult(

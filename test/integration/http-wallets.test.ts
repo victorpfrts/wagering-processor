@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { MikroORM } from '@mikro-orm/postgresql';
+import { NOOP_METRICS } from '../../src/application/ports.ts';
 import { WageringQueries } from '../../src/application/queries.ts';
 import { MikroOrmReadModel } from '../../src/infrastructure/db/mikro-orm-read-model.ts';
 import { type HttpApp, startHttpApp } from '../support/http-app.ts';
@@ -301,13 +302,7 @@ describe('POST /wallets/:walletId/reconciliation', () => {
         warn: () => {},
         error: (message, fields) => logs.push({ message, fields }),
       },
-      {
-        reconciliationDivergence: () => (divergences += 1),
-        outboxPublished: () => {},
-        outboxPublishFailed: () => {},
-        messageHandled: () => {},
-        pendingReferenceRetried: () => {},
-      },
+      { ...NOOP_METRICS, reconciliationDivergence: () => (divergences += 1) },
     );
     const result = await queries.reconcile(wallet['id']);
     await orm.close(true);
