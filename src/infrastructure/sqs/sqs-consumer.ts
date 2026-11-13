@@ -8,6 +8,7 @@ import {
   type SQSClient,
 } from '@aws-sdk/client-sqs';
 import type { AppLogger, WageringMetrics } from '../../application/ports.ts';
+import { crashIfInjected } from '../fault-injection.ts';
 import type { MessageHandler } from '../../interfaces/sqs/wager-message-handler.ts';
 
 export interface SqsConsumerOptions {
@@ -123,6 +124,8 @@ export class SqsConsumer {
     try {
       switch (decision.action) {
         case 'ack':
+          // O efeito já está confirmado no banco neste ponto.
+          crashIfInjected('consumer.before-ack');
           await this.delete(message);
           this.metrics.messageHandled('acked');
           break;

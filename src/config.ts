@@ -1,6 +1,8 @@
 export interface AppConfig {
   port: number;
   logLevel: string;
+  /** Prazo para o desligamento limpo antes de forçar a saída. */
+  shutdownTimeoutMs: number;
   databaseUrl: string;
   db: {
     poolMax: number;
@@ -60,6 +62,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
   return {
     port: integer(env, 'PORT', 3000),
     logLevel: text(env, 'LOG_LEVEL', 'info'),
+    shutdownTimeoutMs: integer(env, 'SHUTDOWN_TIMEOUT_MS', 25_000),
     databaseUrl: text(env, 'DATABASE_URL', 'postgres://wagering:wagering@localhost:5433/wagering'),
     db: {
       poolMax: integer(env, 'DB_POOL_MAX', 10),

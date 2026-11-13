@@ -189,5 +189,12 @@ Cada item abaixo tem um teste de integração que tenta violá-lo direto no Post
 - Rótulos de rota usam o padrão (`/wallets/:walletId`), nunca ids.
 - Cada instância expõe as próprias métricas; a soma é feita no Prometheus.
 
+## Múltiplas instâncias, queda e reinício
+- Toda instância roda os quatro papéis: API, consumidor da fila, publisher da outbox e worker de referências pendentes. Não há líder nem coordenação entre instâncias: quem coordena é o banco (lock de linha, índices únicos, `SKIP LOCKED`).
+- `docker compose --profile app up` sobe 3 réplicas (portas 3000 a 3002) depois de um serviço `migrate` que roda uma vez.
+- `SIGTERM`/`SIGINT`: fecha o HTTP, espera os workers terminarem o que estão fazendo, fecha o banco e sai com código 0. Prazo de 25s (`SHUTDOWN_TIMEOUT_MS`); estourou, sai com código 1.
+- `kill -9` em qualquer ponto é seguro: efeito não confirmado é desfeito pelo banco; mensagem não confirmada volta à fila; evento não publicado continua na outbox para outra instância.
+- Os testes de queda usam processos reais (`bun src/main.ts`) e `SIGKILL`. O ponto "depois do commit e antes do ack" é atingido por injeção de falha (`FAULT_INJECTION=consumer.before-ack`), desligada por padrão e proibida em produção.
+
 ## Autenticação
 Não implementada (não pontua). Ponto de extensão: `AuthGuard` no-op + `ProviderIdentityPort`. Desenho com Keycloak (client credentials por provedor) no `ARCHITECTURE.md`.
